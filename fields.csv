@@ -1,9 +1,9 @@
-tracks,dl_flag,pcs_field,description,directory,suffix
-pn,pdf,final_review_pdf,Camera-ready PDF,PDF,.pdf
-pn,video,Video Figure (Optional),Video Figure,VID,-video-figure.mp4
-pn,video,Video Figure Captions (Required if the video figure contains spoken dialog),Video Figure Captions,VID_SRT,-video-figure-captions.srt
-pn,preview,video_preview,Video Preview,PRV,-video-preview.mp4
-pn,preview,video_preview_captions,Video Preview Captions,PRV_SRT,-video-preview-caption.srt
-pn,talk,Pre-recorded Video Presentation (Required),Talk Video,TLK,talk-video.mp4
-pn,talk,Pre-recorded Video Presentation Captions (Required),Talk Video Captions,TLK_SRT,-talk-video-caption.srt
-pn,supplement,Supplemental Materials (Optional),Supplemental Materials,SUP,-supplemental-materials.zip
+tracks,dl_flag,pcs_field,description,directory,suffix,mimetype,upload_to_dl
+pn,pdf,final_review_pdf,Camera-ready PDF,PDF,.pdf,application/pdf,no
+pn,video,Video Figure (Optional),Video Figure,VID,-video-figure.mp4,video/mp4,yes
+pn,video,Video Figure Captions (Required if the video figure contains spoken dialog),Video Figure Captions,VID_SRT,-video-figure-captions.vtt,text/vtt,yes
+pn,preview,video_preview,Video Preview,PRV,-video-preview.mp4,video/mp4,yes
+pn,preview,video_preview_captions,Video Preview Captions,PRV_SRT,-video-preview-caption.vtt,text/vtt,yes
+pn,talk,Pre-recorded Video Presentation (Required),Talk Video,TLK,-talk-video.mp4,video/mp4,yes
+pn,talk,Pre-recorded Video Presentation Captions (Required),Talk Video Captions,TLK_SRT,-talk-video-caption.vtt,text/vtt,yes
+pn,supplement,Supplemental Materials (Optional),Supplemental Materials,SUP,-supplemental-materials.zip,application/zip,yes
