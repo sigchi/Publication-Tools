@@ -11,12 +11,13 @@ Currently, the script does not check whether a file has already been uploaded.
 
 """
 
-CSV_FILE = "./camera_ready.csv"
-TAPS_CSV = "./taps_procs.csv" # contains the DOIs 
-PROCEEDING_ID = "12338" # CHI '22 FP
+DRY_RUN = False
 
-VID_DIR = "./PCS_VID/"
-SUP_DIR = "./PCS_SUP/"
+CSV_FILE = "./camera_ready.csv"
+FIELDS_FILE = "./fields.csv"
+#TAPS_CSV = "./taps_procs.csv" # contains the DOIs 
+PROCEEDING_ID = "12337" # CHI '22 EA
+#PROCEEDING_ID = "12338" # CHI '22 FP
 
 # List URL is https://acmsubmit.acm.org/atyponListing.cfm?proceedingID=12338 etc.
 
@@ -29,7 +30,9 @@ from base64 import b64encode
 import requests
 import re
 import os
+import sys
 from csv import DictReader
+import webvtt
 
 
 TOKEN_URL = f"https://acmsubmit.acm.org/videosubmission.cfm?proceedingID={PROCEEDING_ID}"
@@ -39,16 +42,19 @@ SUBMIT_URL = "https://acmsubmit.acm.org/videosubmission2.cfm"
 def b64(stringy):
     return b64encode(bytes(stringy, 'utf-8')).decode('utf-8')
 
-# PCS does not have the DOIs - take them from TAPS
-def get_doi_list(csvfile):
-    doi = {}
-    with open(csvfile) as fd:
-        dr = DictReader(fd)
-        for paper in dr:
-            doi[paper['PCS_ID']] = paper['DOI'][16:] # remove URL prefix
-    return doi
-
-DOI = get_doi_list(TAPS_CSV)
+# ensure that we only upload VTT files
+def srt_to_vtt(filename):
+    try:
+        w = webvtt.read(filename) 
+        print("file already in VTT format")
+        return
+    except (webvtt.errors.MalformedFileError, webvtt.errors.MalformedCaptionError):
+        try: 
+            w = webvtt.from_srt(filename)
+            w.save(filename)
+            print("SRT converted to VTT")
+        except (webvtt.errors.MalformedFileError, webvtt.errors.MalformedCaptionError):
+            print("Malformed file, skipping!")
 
 
 def get_token():
@@ -61,6 +67,9 @@ def get_token():
     return token
 
 
+def chunked(fd, chunksize=5*1024*1024):
+    while data := fd.read(chunksize):
+        yield data
 
 def upload_file(token, path, filename, filetype, author, email, doi, description):
     if DRY_RUN: 
@@ -77,21 +86,29 @@ def upload_file(token, path, filename, filetype, author, email, doi, description
     assert(r.status_code == 201)
     print("got upload path")
     UPLOAD_PATH = r.headers['Location']
-    HEADERS = {'Authorization': f"Atypon {token}",
-           'Tus-Resumable': '1.0.0',
-           'Upload-Offset': '0',
-           'Content-Type': 'application/offset+octet-stream',
-           'Content-Length': filesize
-          }
-    r = requests.patch(UPLOAD_PATH, data=open(path,'rb'), headers=HEADERS)
-    print("uploaded")
-    assert(r.status_code==204)
+
+    offset = 0
+    for chunk in chunked(open(path, 'rb')):
+        length = len(chunk)
+        print(f"Uploaded {offset//(1000*1000)} / {filesize//(1000*1000)} MB", end='\r') 
+        HEADERS = {'Authorization': f"Atypon {token}",
+               'Tus-Resumable': '1.0.0',
+               'Upload-Offset': str(offset),
+               'Content-Type': 'application/offset+octet-stream',
+               'Content-Length': str(length)
+              }
+        r = requests.patch(UPLOAD_PATH, data=chunk, headers=HEADERS)
+        offset +=length
+        #print(f"Headers: {r.headers}")
+        #print(r.status_code)
+        #print(r.text)
+        assert(r.status_code==204)
     print(f"Uploaded to: {UPLOAD_PATH}")
     return UPLOAD_PATH
 
 
 
-def commit_submission(author, email, doi, description, filename1, url1, filename2, url2):
+def commit_submission(author, email, doi, description, filenames_urls):
     if DRY_RUN:
         print("DRY RUN: committing")
         return True
@@ -99,54 +116,68 @@ def commit_submission(author, email, doi, description, filename1, url1, filename
                  'yourEmailAddress': email,
                  'doi': doi,
                  'description': description,
-                 'file-name-1': filename1,
-                 'file-url-1': url1,
-                 'file-name-2': filename2,
-                 'file-url-2': url2,
                  'proceedingID': PROCEEDING_ID,
                  'ok2Go': 'YES'    
     }
-    print(post_metadata)
+    for idx, fu in enumerate(filenames_urls):
+        filename, url = fu
+        post_metadata[f"file-name-{idx+1}"] = filename
+        post_metadata[f"file-url-{idx+1}"] = url
     r = requests.post(SUBMIT_URL, data = post_metadata)  
     assert(r.status_code == 200)
-    print(r)
     return True
 
 
 
 def upload_submission(sub):
-    if sub['Status'] == "complete":
-        filename1, url1, filename2, url2 = '','','',''
-        print(f"Uploading additional files for {sub['Paper ID']} ({sub['Title']})")
-        doi = DOI[sub['Paper ID']] #map paper id to DOI
-        doi_part = doi.split("/")[1]
-        vid_file = doi_part+'.mp4'
-        vid_path = VID_DIR+vid_file
-        token = None
-        if os.path.isfile(vid_path):
-            if not token:
-                token = get_token()
-            print(f"    Uploading video file {vid_file}")
-            description = f"Video for CHI '22 publication {sub['Paper ID']} ({doi})'"
-            filename1 = vid_file
-            url1 = upload_file(token, vid_path, vid_file, 'video/mp4', sub['Contact Name'], sub['Contact Email'], doi, description)
-        
-        zip_file = doi_part+'.zip'
-        zip_path = SUP_DIR+zip_file
-        if os.path.isfile(zip_path):
-            if not token:
-                token = get_token()
-            print(f"    Uploading supplementary materials {zip_file}")
-            description = f"Supplementary materials for CHI '22 publication {sub['Paper ID']} ({doi})'"
-            filename2 = zip_file
-            url2 = upload_file(token, zip_path, zip_file, 'application/zip', sub['Contact Name'], sub['Contact Email'], doi, description)
-        
-        if token: # indicates that we have uploaded something
-            description = f"Supplementary materials for CHI '22 publication {sub['Paper ID']} ({doi})'"
-            print("Committing")
-            commit_submission(sub['Contact Name'], sub['Contact Email'], doi, description, filename1, url1, filename2, url2)           
-    else:
+    if not sub['Status'] == "complete":
         print(f"NOT READY {sub['Paper ID']} ({sub['Title']})")
+        return
+    # else
+    print(f"Uploading additional files for {sub['Paper ID']} ({sub['Title']})")
+    doi = sub['DOI'].removeprefix("https://doi.org/")
+    doi_part = doi.split("/")[-1]
+    token = None  # TODO: do we need a new token for every submission?
+    for filetype in FILETYPES:
+        filename = f"{doi_part}{filetype['suffix']}"
+        filepath = f"{filetype['directory']}/{filename}"
+        if filepath.endswith(".vtt"):
+            srt_to_vtt(filepath)
+        if not os.path.isfile(filepath):
+            print(f"File not found: {filepath}")
+            continue
+        if not token:
+            token = get_token()
+        print(f"Uploading {filetype['description']} file: {filepath}")
+        description = f"{filetype['description']} for publication {sub['Paper ID']} ({doi_part})"
+        url = upload_file(token, filepath, filename, filetype['mimetype'], sub['Contact Name'], sub['Contact Email'], doi, description)
+        filenames_urls = [] # leftover from earlier version where all files for one submission were committed together. Left here in case the former behavior should be restored
+        filenames_urls.append((filename, url))
+        commit_description = f"{filetype['description']} for publication {sub['Paper ID']} ({doi_part})"
+        print("Committing")
+        commit_submission(sub['Contact Name'], sub['Contact Email'], doi, commit_description, filenames_urls)           
+        print("Done")
+
+
+all_filetypes = list(DictReader(open(FIELDS_FILE, "r")))
+all_filetypes = [d for d in all_filetypes if d['upload_to_dl'] == "yes"]
+
+# poor man's argparse
+if "--all" in sys.argv:
+    FILETYPES = all_filetypes
+    # TODO: also check here whether dirs exist
+else:
+    FILETYPES = []
+    for ft in all_filetypes:
+        if "--" + ft['dl_flag'] in sys.argv:
+            try:
+                os.stat(ft['directory'])
+                FILETYPES.append(ft)
+            except FileNotFoundError:
+                print(f"directory '{ft['directory']}' does not exist, skipping filetype")
+
+if len(FILETYPES) == 0:
+    sys.exit()
 
 
 fd = open(CSV_FILE, encoding='utf-8-sig')
