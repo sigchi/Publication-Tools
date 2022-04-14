@@ -32,7 +32,7 @@ import requests
 # PCS_CONF_ID = "chi22b" # papers and notes
 
 if sys.argv[-1].startswith("chi"):
-    PCS_CONF_ID = "chi22b" # FP
+    PCS_CONF_ID = sys.argv[-1]
 else:
     print("Last parameter needs to be the conference track ID from PCS (starting with 'chi')")
     sys.exit()
