@@ -107,7 +107,7 @@ for idx, submission in enumerate(submissions):
                     url = submission[filetype['pcs_field']]
                     doc = urlopen(url)
                     doc_size = int(doc.getheader("Content-Length"))
-                    print(f"    > {doc_size/1000000.0:.2f} MB")
+                    print(f" ({doc_size/1000000.0:.2f} MB)")
                     if os.path.exists(filename): # only download if file changed
                         file_size = os.stat(filename).st_size
                         if file_size == doc_size:
