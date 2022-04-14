@@ -32,6 +32,7 @@ import pdfminer
 from pdfminer.pdfdocument import PDFDocument
 from pdfminer.pdfparser import PDFParser
 from pdfminer.high_level import extract_text
+from pdfminer.pdftypes import resolve1
 
 
 # for testing purposes
@@ -77,7 +78,7 @@ def get_info_from_html(html_file):
         concept_list = (re.findall('CCS Concepts: (.*?;)+', concepts[0].text_content()))
         info['CCS CONCEPTS'] = "".join(concept_list)
     else:
-        print(f"    concepts not found in {html_file}")
+        print(f"# {html_file}: concepts not found")
     
     doi = root.xpath("//div[@class = 'pubInfo']//a")[0] # 1 would be proceedings DOI
     info['DOI'] = doi.text_content()
@@ -222,12 +223,37 @@ def get_info_from_pdf(pdf_file, debug = False):
     return pdf_info
 
 
+def get_pdf_catalog(pdf_file):
+    fp = open(pdf_file, 'rb')
+    parser = PDFParser(fp)
+    doc = PDFDocument(parser)
+    catalog = doc.catalog
+    return catalog
+
 
 # Attention: most of the checks below don't work very well due to difficulties in extracting text from PDF
 
-def check_ligatures(html_info, html_text, pdf_info, pdf_text):
+def check_form_fields(pdf_catalog):
+    try:
+        fields = resolve1(pdf_catalog['AcroForm'])['Fields']
+        if len(fields) > 0:
+            return "The paper contains form fields."
+    except:
+        return
+
+
+def check_ligatures_fi(html_info, html_text, pdf_info, pdf_text):
     if html_text.find("fi") != -1 and pdf_text.find("fi") == -1:
-        return "Accessibility: the PDF plain text does not contain the letters 'fi'. Please check whether ligatures are encoded correctly."
+        return "Accessibility: the PDF plain text does not contain the letters 'fi' (but HTML does). Please check whether ligatures are encoded correctly."
+
+
+def check_ligatures_ff(html_info, html_text, pdf_info, pdf_text):
+    if html_text.find("ff") != -1 and pdf_text.find("ff") == -1:
+        return "Accessibility: the PDF plain text does not contain the letters 'ff' (but HTML does). Please check whether ligatures are encoded correctly."
+
+def check_ligatures_qu(html_info, html_text, pdf_info, pdf_text):
+    if html_text.find("Qu") != -1 and pdf_text.find("Qu") == -1:
+        return "Accessibility: the PDF plain text does not contain the letters 'Qu' (but HTML does). Please check whether ligatures are encoded correctly."
 
 
 
@@ -270,7 +296,9 @@ def check_differences_title(html_info, html_text, pdf_info, pdf_text):
     ht = html_info['TITLE'].strip()
     pt = pdf_info['TITLE'].strip()
     pt = pt[0:min(len(pt), len(ht))] # pdf title sometimes contains content from next line
-    if ht != pt:
+    ht_clean = ht.replace("’", "'").replace('“', '"').replace('”', '"')
+    pt_clean = pt.replace("’", "'").replace('“', '"').replace('”', '"')
+    if ht_clean != pt_clean:
         return f"Different titles in HTML and PDF. Please check:\n{ht}\n{pt}"   
 
 
@@ -283,20 +311,29 @@ def check_email(html_info, html_text, pdf_info, pdf_text):
             if "@" in line:
                 emails += 1
     if emails == 0:
-        return "None of the author has an email address given!"
+        return "None of the authors has an email address given!"
     elif emails < num_authors:
         pass # too many false positives
         #return f"Only {emails}/{num_authors} authors have an email address!"
 
 
-CHECKS = [check_differences_title, check_email, check_ligatures, check_pdf_creator, check_differences_reference_count]
+CHECKS = [check_differences_title, check_email, check_ligatures_fi, check_ligatures_ff, check_ligatures_qu, check_pdf_creator, check_differences_reference_count]
 
 
 def lint(pdf_file):
-    pcs_id = re.findall(r'pn[0-9]+', pdf_file)[0]
-    html_file = glob.glob(f'{HTML_DIR}/{pcs_id}*.html')[0]
+    try:
+        pcs_id = re.findall(r'pn[0-9]+', pdf_file)[0]
+    except:
+        print(f"{pdf_file}: PCS ID could not be extracted")
+        return
+    try:
+        html_file = glob.glob(f'{HTML_DIR}/{pcs_id}*.html')[0]
+    except:
+        print(f"{pdf_file}: HTML file not found")
+        return
     pdf_text = extract_text(pdf_file)
     pdf_info = get_info_from_pdf(pdf_file)
+    pdf_catalog = get_pdf_catalog(pdf_file)
     html_text = extract_html_text(html_file)
     html_info = get_info_from_html(html_file)
     errors = []
@@ -308,17 +345,19 @@ def lint(pdf_file):
     ret = check_pdf_doi(html_info, html_text, pdf_info, pdf_text, pcs_id)
     if ret:
             errors.append(ret)
+    ret = check_form_fields(pdf_catalog)
+    if ret:
+            errors.append(ret)
 
     if len(errors) > 0:
-        print(pdf_file)
-        print("    ", end="")
-        print("\n    ".join(errors))
+        print(f"{pcs_id}: ", end="")
+        print(f"\n{pcs_id}: ".join(errors))
     else:
-        print("----------- OK! ------------")
+        print(f"#{pcs_id}: OK!")
         pass
 
 
-pdf_files = glob.glob(f'{PDF_DIR}/*.pdf')
+pdf_files = sorted(glob.glob(f'{PDF_DIR}/*.pdf'))
 #html_files = glob.glob(f'{HTML_DIR}/*.html') # currently we only iterate over the PDF files
 
 for pdf_file in pdf_files:
@@ -326,7 +365,8 @@ for pdf_file in pdf_files:
         lint(pdf_file)
         print("")
     except Exception as e:
-        print(f'failed to automatically check: {pdf_file}')
+        print(f'{pdf_file} couldn\'t be to automatically checked: ', end="")
+        print(e)
 
 
 
