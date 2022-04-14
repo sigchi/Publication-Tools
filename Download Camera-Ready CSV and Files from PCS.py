@@ -7,27 +7,16 @@ INFO = """This script downloads a spreadsheet of camera-ready submissions from P
 Afterwards, it optionally downloads all final PDFs, videos and zip files with supplementary 
 materials which are linked in the spreadsheet.
 To do this, pass parameters `--all`, `--pdf`, `--video`, `--supplement` or a combination of these.
-
-Adjust the spreadsheet URL to match your conference. 
+You need a file fields.csv that contains the metadata for each track
 
 The downloaded spreadsheet is called `camera_ready.csv`.
-Files are stored in folders ./PCS_PDF/, ./PCS_VID/, and ./PCS_SUP/ .
-Files are named `{Paper ID from CSV}.{EXT}`, e.g., `pn1234.mp4`
+Files are stored in folders ./PDF/, etc., as configured in fields.csv.
+Files are named `{last part of DOI from CSV}-{file description}.{EXT}`, as configured in fields.csv
+This is the format required by ACM for upload in the DL.
 
-ATTENTION: existing files are overwritten.
+You can provide credentials for PCS in the environment variables PCS_USER / PCS_PASSWORD or enter them once prompted
 
 """
-
-#PCS_CONF_ID = "chi22b" # FP
-#PCS_CONF_ID = "chi22l" # LBR
-#PCS_CONF_ID = "chi22e" # Student research competition
-PCS_SPREADSHEET_URL= f"https://new.precisionconference.com/{PCS_CONF_ID}/pubchair/csv/camera"
-
-##################################
-
-print(INFO)
-print(f"Downloading spreadsheet and files for: {PCS_CONF_ID}")
-
 
 # stdlib
 import re
@@ -40,10 +29,25 @@ import getpass
 # additional dependencies
 import requests
 
+# PCS_CONF_ID = "chi22b" # papers and notes
+
+if sys.argv[-1].startswith("chi"):
+    PCS_CONF_ID = "chi22b" # FP
+else:
+    print("Last parameter needs to be the conference track ID from PCS (starting with 'chi')")
+    sys.exit()
+
+##################################
+
+print(INFO)
+print(f"Downloading spreadsheet and files for: {PCS_CONF_ID}")
+
+
 
 PCS_LOGIN_URL = "https://new.precisionconference.com/user/login"
 PCS_USER = os.environ.get('PCS_USER') or input("PCS user: ")
 PCS_PASSWORD = os.environ.get('PCS_PASSWORD') or getpass.getpass("PCS password: ")
+PCS_SPREADSHEET_URL= f"https://new.precisionconference.com/{PCS_CONF_ID}/pubchair/csv/camera"
 
 
 def get_camera_ready_csv():
@@ -69,56 +73,41 @@ def get_filetypes(typefile):
         filetypes.append(dic)
     return filetypes
 
-"""
-
-FILES = [{'field': 'final_review_pdf', 'dir': 'PCS_PDF', 'ext': '.pdf'},
-         {'field': 'Video Figure (Optional)', 'dir': 'PCS_VID', 'ext': '-video-figure.mp4'},
-         {'field': 'Video Figure Captions (Required if the video figure contains spoken dialog)', 'dir': 'PCS_VID', 'ext': '-video-figure-captions.mp4'},
-         {'field': 'video_preview', 'dir': 'PCS_PRV', 'ext': '-video-preview.mp4'},
-         {'field': 'video_preview_captions', 'dir': 'PCS_SRT', 'ext': '-video-preview-caption.srt'},
-         {'field': 'Supplemental Materials (Optional)', 'dir': 'PCS_SUP', 'ext': 'zip'},
-         {'field': 'supplemental_materials', 'dir': 'PCS_SUP', 'ext': 'zip'},]
-"""
-filetypes = []
+all_filetypes = get_filetypes("fields.csv")
 
 # poor man's argparse
 if "--all" in sys.argv:
-    filetypes = FILES
+    filetypes = all_filetypes
 else:
-    if "--pdf" in sys.argv:
-        filetypes.append(FILES[0])
-    if "--video" in sys.argv:
-        filetypes.append(FILES[1])
-    if "--preview" in sys.argv:
-        filetypes.append(FILES[2])
-        filetypes.append(FILES[3])
-    if "--supplement" in sys.argv:
-        filetypes.append(FILES[4])
-        filetypes.append(FILES[5])
+    filetypes = []
+    for ft in all_filetypes:
+        if "--" + ft['dl_flag'] in sys.argv:
+            filetypes.append(ft)
+
 if len(filetypes) == 0:
     sys.exit()
         
 for filetype in filetypes:
     try:
-        os.makedirs(filetype['dir'])
+        os.makedirs(filetype['directory'])
     except FileExistsError:
-        print(f"directory '{filetype['dir']}' already exists, writing into it")
-
+        print(f"directory '{filetype['directory']}' already exists, writing into it")
 
 fd = open("camera_ready.csv", encoding='utf-8-sig') # CSV has BOM
 submissions = DictReader(fd)
-for submission in submissions:
-    print(f"Paper: {submission['Paper ID']} ({submission['Title']})")
+for idx, submission in enumerate(submissions):
+    print(f"[{idx}] Paper: {submission['Paper ID']} ({submission['Title']})")
     for filetype in filetypes:
         try:
-            if len(submission[filetype['field']]) > 1:
-                print(f"Retrieving {filetype['ext']} file: {submission[filetype['field']]}")
+            if len(submission[filetype['pcs_field']]) > 1:
+                print(f"   Retrieving '{filetype['description']}'", end="")
                 try:
-                    filename = f"{filetype['dir']}/{submission['Paper ID']}.{filetype['ext']}"
-                    url = submission[filetype['field']]
+                    doi = submission['DOI'].split("/")[-1]  # https://doi.org/10.1145/3491102.3501897 -> 3491102.3501897
+                    filename = f"{filetype['directory']}/{doi}{filetype['suffix']}"
+                    url = submission[filetype['pcs_field']]
                     doc = urlopen(url)
                     doc_size = int(doc.getheader("Content-Length"))
-                    print(doc_size)
+                    print(f"    > {doc_size/1000000.0:.2f} MB")
                     if os.path.exists(filename): # only download if file changed
                         file_size = os.stat(filename).st_size
                         if file_size == doc_size:
@@ -127,13 +116,12 @@ for submission in submissions:
                     # else
                     with open(filename, "wb") as fd:
                         fd.write(doc.read())
-                    #urlretrieve(url, filename )
                 except (ValueError, HTTPError):
-                    print("   >... not found on server")
+                    print("   >... file not found on server")
             else:
-                print("   >... not submitted")
+                print(f"   >... '{filetype['description']}' not submitted")
         except KeyError:
-            print("   >... field not in CSV")
+            print(f"   >... field {filetype['pcs_field']} not in CSV")
 
 fd.close()
 
