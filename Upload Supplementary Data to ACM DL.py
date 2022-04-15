@@ -7,8 +7,6 @@ INFO = """This script uploads videos and supplementary materials from the local 
 to the official ACM DL upload form.
 
 It does not require any credentials.
-Currently, the script does not check whether a file has already been uploaded.
-
 """
 
 DRY_RUN = False
@@ -41,15 +39,15 @@ def b64(stringy):
 def srt_to_vtt(filename):
     try:
         w = webvtt.read(filename) 
-        print("file already in VTT format")
+        print("    caption file already in VTT format")
         return
     except (webvtt.errors.MalformedFileError, webvtt.errors.MalformedCaptionError):
         try: 
             w = webvtt.from_srt(filename)
             w.save(filename)
-            print("SRT converted to VTT")
+            print("    caption file converted to VTT")
         except (webvtt.errors.MalformedFileError, webvtt.errors.MalformedCaptionError):
-            print("Malformed file, skipping!")
+            print("    caption file, skipping conversion!")
 
 
 def get_token():
@@ -134,6 +132,15 @@ def upload_submission(sub):
     doi_part = doi.split("/")[-1]
     token = None  # TODO: do we need a new token for every submission?
     for filetype in FILETYPES:
+        if filetype['upload_to_dl'] == "no":
+            print(f"Skipping '{filetype['description']}': not to be uploaded to DL")
+            continue
+        if filetype['upload_to_dl'] != "yes":  # explicit agreement needed!
+            agreement_field = filetype['upload_to_dl']
+            if sub[agreement_field] == "": # agreement missing
+                print(f"Skipping '{filetype['description']}': no agreement from authors")
+                continue
+        # else
         filename = f"{doi_part}{filetype['suffix']}"
         filepath = f"{filetype['directory']}/{filename}"
         if filepath.endswith(".vtt"):
@@ -156,7 +163,6 @@ def upload_submission(sub):
         print("    Committing")
         commit_submission(sub['Contact Name'], sub['Contact Email'], doi, commit_description, filenames_urls)           
         print("    Done")
-
 
 
 def get_uploaded_submissions(conf_id):
@@ -201,7 +207,7 @@ SUBMIT_URL = "https://acmsubmit.acm.org/videosubmission2.cfm"
 ALREADY_UPLOADED = get_uploaded_submissions(PROCEEDING_ID)
 
 all_filetypes = list(DictReader(open(FIELDS_FILE, "r")))
-all_filetypes = [d for d in all_filetypes if d['upload_to_dl'] == "yes"]
+#all_filetypes = [d for d in all_filetypes if d['upload_to_dl'] == "yes"]
 
 # poor man's argparse
 if "--all" in sys.argv:
@@ -223,6 +229,7 @@ if len(FILETYPES) == 0:
 
 fd = open(CSV_FILE, encoding='utf-8-sig')
 submissions = DictReader(fd)
-for submission in submissions:
+for idx, submission in enumerate(submissions):
+    print(f"[{idx}] ", end="")
     upload_submission(submission)
 

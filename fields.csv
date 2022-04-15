@@ -4,6 +4,6 @@ pn,video,Video Figure (Optional),Video Figure,VID,-video-figure.mp4,video/mp4,ye
 pn,video,Video Figure Captions (Required if the video figure contains spoken dialog),Video Figure Captions,VID_SRT,-video-figure-captions.vtt,text/vtt,yes
 pn,preview,video_preview,Video Preview,PRV,-video-preview.mp4,video/mp4,yes
 pn,preview,video_preview_captions,Video Preview Captions,PRV_SRT,-video-preview-caption.vtt,text/vtt,yes
-pn,talk,Pre-recorded Video Presentation (Required),Talk Video,TLK,-talk-video.mp4,video/mp4,yes
-pn,talk,Pre-recorded Video Presentation Captions (Required),Talk Video Captions,TLK_SRT,-talk-video-caption.vtt,text/vtt,yes
+pn,talk,Pre-recorded Video Presentation (Required),Talk Video,TLK,-talk-video.mp4,video/mp4,acmdl_agreement
+pn,talk,Pre-recorded Video Presentation Captions (Required),Talk Video Captions,TLK_SRT,-talk-video-caption.vtt,text/vtt,acmdl_agreement
 pn,supplement,Supplemental Materials (Optional),Supplemental Materials,SUP,-supplemental-materials.zip,application/zip,yes
