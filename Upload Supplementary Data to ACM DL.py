@@ -13,10 +13,8 @@ Currently, the script does not check whether a file has already been uploaded.
 
 DRY_RUN = False
 
-CSV_FILE = "./camera_ready.csv"
-FIELDS_FILE = "./fields.csv"
 #TAPS_CSV = "./taps_procs.csv" # contains the DOIs 
-PROCEEDING_ID = "12337" # CHI '22 EA
+#PROCEEDING_ID = "12337" # CHI '22 EA
 #PROCEEDING_ID = "12338" # CHI '22 FP
 
 # List URL is https://acmsubmit.acm.org/atyponListing.cfm?proceedingID=12338 etc.
@@ -33,11 +31,8 @@ import os
 import sys
 from csv import DictReader
 import webvtt
+from lxml import etree
 
-
-TOKEN_URL = f"https://acmsubmit.acm.org/videosubmission.cfm?proceedingID={PROCEEDING_ID}"
-UPLOAD_URL = "https://files.atypon.com/acm/"
-SUBMIT_URL = "https://acmsubmit.acm.org/videosubmission2.cfm"
 
 def b64(stringy):
     return b64encode(bytes(stringy, 'utf-8')).decode('utf-8')
@@ -63,7 +58,7 @@ def get_token():
     r = requests.get(TOKEN_URL)
     token = re.search(r'data-token="([a-zA-Z0-9=]+)"', r.text).groups()[0]
     assert token
-    print(f"Token: {token}")
+    #print(f"Token: {token}")
     return token
 
 
@@ -75,11 +70,11 @@ def upload_file(token, path, filename, filetype, author, email, doi, description
     if DRY_RUN: 
         print("DRY RUN: uploaded file")
         return ""
-    filesize = str(os.path.getsize(path))
+    filesize = int(os.path.getsize(path))
     metadata = f"filename {b64(filename)},filetype {b64(filetype)},yourName {b64(author)},yourEmailAddress {b64(email)},doi {b64(doi)},description {b64(description)}"
     HEADERS = {'Authorization': f"Atypon {token}",
            'Upload-Metadata': metadata, 
-           'Upload-Length' : filesize,
+           'Upload-Length' : str(filesize),
            'Tus-Resumable': '1.0.0'        # required!
           }
     r = requests.post(UPLOAD_URL, headers=HEADERS)
@@ -90,7 +85,7 @@ def upload_file(token, path, filename, filetype, author, email, doi, description
     offset = 0
     for chunk in chunked(open(path, 'rb')):
         length = len(chunk)
-        print(f"Uploaded {offset//(1000*1000)} / {filesize//(1000*1000)} MB", end='\r') 
+        print(f"    Uploaded {offset//(1000*1000)} / {filesize//(1000*1000)} MB", end='\r') 
         HEADERS = {'Authorization': f"Atypon {token}",
                'Tus-Resumable': '1.0.0',
                'Upload-Offset': str(offset),
@@ -103,7 +98,7 @@ def upload_file(token, path, filename, filetype, author, email, doi, description
         #print(r.status_code)
         #print(r.text)
         assert(r.status_code==204)
-    print(f"Uploaded to: {UPLOAD_PATH}")
+    print(f"    Uploaded to: {UPLOAD_PATH}")
     return UPLOAD_PATH
 
 
@@ -144,20 +139,66 @@ def upload_submission(sub):
         if filepath.endswith(".vtt"):
             srt_to_vtt(filepath)
         if not os.path.isfile(filepath):
-            print(f"File not found: {filepath}")
+            print(f"    No file for: {filepath} (probably not submitted)")
             continue
         if not token:
             token = get_token()
-        print(f"Uploading {filetype['description']} file: {filepath}")
         description = f"{filetype['description']} for publication {sub['Paper ID']} ({doi_part})"
+        if description in ALREADY_UPLOADED:
+            print(f"    Already uploaded '{description}'... skipping it")
+            continue
+        # else
+        print(f"    Uploading {filetype['description']} file: {filepath}")
         url = upload_file(token, filepath, filename, filetype['mimetype'], sub['Contact Name'], sub['Contact Email'], doi, description)
         filenames_urls = [] # leftover from earlier version where all files for one submission were committed together. Left here in case the former behavior should be restored
         filenames_urls.append((filename, url))
         commit_description = f"{filetype['description']} for publication {sub['Paper ID']} ({doi_part})"
-        print("Committing")
+        print("    Committing")
         commit_submission(sub['Contact Name'], sub['Contact Email'], doi, commit_description, filenames_urls)           
-        print("Done")
+        print("    Done")
 
+
+
+def get_uploaded_submissions(conf_id):
+    URL=f"https://acmsubmit.acm.org/atyponListing.cfm?proceedingID={conf_id}"
+    content = requests.get(URL).text
+    root = etree.HTML(content)
+    rows = root.xpath("//table[@id = 'publications']/tr")
+    #print(f"Found {len(rows)} submissions (including excluded ones).")
+
+    submissions = []
+    for row in rows:
+        submission= {}
+        excluded = row[0][0].tail.endswith("excluded")
+        submission['excluded'] = excluded
+        submission['Paper Number'] = row[1].text
+        submission['Load Date'] = row[2].text
+        submission['Contact'] = row[3][0].text
+        submission['Email'] = row[3][0].attrib['href'].removeprefix("mailto:")
+        submission['DOI'] = row[4].text
+        submission['File Descriptions'] = row[5].text
+        submission['File URL'] = row[6][0].attrib['href']
+        submissions.append(submission)
+
+    already_uploaded = [d['File Descriptions'] for d in submissions]
+    already_uploaded_without_excluded = [d['File Descriptions'] for d in submissions if not d['excluded']]
+    excluded = [d['File Descriptions'] for d in submissions if d['excluded']]
+    print(f"Found {len(already_uploaded)} already uploaded submissions (including {len(excluded)} excluded ones).")
+    return already_uploaded
+
+
+
+try:
+    PROCEEDING_ID = int(sys.argv[-1])
+except ValueError:
+    PROCEEDING_ID = int(input("Conference ID (e.g. 12337): "))
+
+CSV_FILE = "./camera_ready.csv"
+FIELDS_FILE = "./fields.csv"
+TOKEN_URL = f"https://acmsubmit.acm.org/videosubmission.cfm?proceedingID={PROCEEDING_ID}"
+UPLOAD_URL = "https://files.atypon.com/acm/"
+SUBMIT_URL = "https://acmsubmit.acm.org/videosubmission2.cfm"
+ALREADY_UPLOADED = get_uploaded_submissions(PROCEEDING_ID)
 
 all_filetypes = list(DictReader(open(FIELDS_FILE, "r")))
 all_filetypes = [d for d in all_filetypes if d['upload_to_dl'] == "yes"]
