@@ -123,7 +123,8 @@ def commit_submission(author, email, doi, description, filenames_urls):
 
 
 def upload_submission(sub):
-    if not sub['Status'] == "complete":
+    submission_ready_field = FILETYPES[0]['ready_field']
+    if sub[submission_ready_field] == "":
         print(f"NOT READY {sub['Paper ID']} ({sub['Title']})")
         return
     # else
