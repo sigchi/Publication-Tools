@@ -29,12 +29,11 @@ import getpass
 # additional dependencies
 import requests
 
-# PCS_CONF_ID = "chi22b" # papers and notes
 
-if sys.argv[-1].startswith("chi"):
+if re.match(r"^[a-z]{2,}\d{2}[a-z]+$", sys.argv[-1]):
     PCS_CONF_ID = sys.argv[-1]
 else:
-    print("Last parameter needs to be the conference track ID from PCS (starting with 'chi')")
+    print("Last parameter needs to be the conference track ID from PCS (e.g. 'chi23b')")
     sys.exit()
 
 ##################################
@@ -43,24 +42,47 @@ print(INFO)
 print(f"Downloading spreadsheet and files for: {PCS_CONF_ID}")
 
 
-
 PCS_LOGIN_URL = "https://new.precisionconference.com/user/login"
 PCS_USER = os.environ.get('PCS_USER') or input("PCS user: ")
 PCS_PASSWORD = os.environ.get('PCS_PASSWORD') or getpass.getpass("PCS password: ")
-PCS_SPREADSHEET_URL= f"https://new.precisionconference.com/{PCS_CONF_ID}/pubchair/csv/camera"
+PCS_TRACK_LIST = "https://new.precisionconference.com/get_table?table_id=user_chairing&conf_id=&type_id="
+PCS_SPREADSHEET_URL = f"https://new.precisionconference.com/{PCS_CONF_ID}/pubchair/csv/camera"
+LIST_FILE = f"./{PCS_CONF_ID}_submissions.csv"
+FIELDS_FILE = f"./{PCS_CONF_ID}_fields.csv"
 
 
-def get_camera_ready_csv():
+def get_available_tracks():
+    print("Getting list of tracks ... ")
+    pcs_session = requests.Session()
+    r = pcs_session.get(PCS_LOGIN_URL)
+    csrf_token = re.search(r'name="csrf_token" type="hidden" value="([a-z0-9#]+)"', r.text).groups()[0]
+    r = pcs_session.post(PCS_LOGIN_URL, data={'username': PCS_USER, 'password': PCS_PASSWORD, 'csrf_token': csrf_token})
+    r = pcs_session.get(PCS_TRACK_LIST)
+    roles = r.json()['data']
+    for role in roles:
+        title = role[0]
+        match = re.match(r'<a href="/(\w+)/(\w+)">(.+)</a>', role[3])
+        track_id = match.group(1)
+        role_id = match.group(2)
+        track_name = match.group(3)
+        print(f"{title} ({role_id}): {track_name} ({track_id})")
+
+
+def get_camera_ready_csv(overwrite=False):
     # get current data from PCS
+    if overwrite is False and os.path.exists(LIST_FILE):
+        print("file already exists - skipping download")
+        return
     print("Downloading camera_ready.csv ... ")
     pcs_session = requests.Session()
     r = pcs_session.get(PCS_LOGIN_URL)
     csrf_token = re.search(r'name="csrf_token" type="hidden" value="([a-z0-9#]+)"', r.text).groups()[0]
     r = pcs_session.post(PCS_LOGIN_URL, data={'username': PCS_USER, 'password': PCS_PASSWORD, 'csrf_token': csrf_token})
     r = pcs_session.get(PCS_SPREADSHEET_URL)
-    with open("camera_ready.csv", "wb") as fd:
+    with open(LIST_FILE, "wb") as fd:
         fd.write(r.content)
     print("done.")
+
 
 get_camera_ready_csv()
 
@@ -73,7 +95,8 @@ def get_filetypes(typefile):
         filetypes.append(dic)
     return filetypes
 
-all_filetypes = get_filetypes("fields.csv")
+
+all_filetypes = get_filetypes(FIELDS_FILE)
 
 # poor man's argparse
 if "--all" in sys.argv:
@@ -86,14 +109,14 @@ else:
 
 if len(filetypes) == 0:
     sys.exit()
-        
+
 for filetype in filetypes:
     try:
-        os.makedirs(filetype['directory'])
+        os.makedirs(f"{PCS_CONF_ID}_{filetype['directory']}")
     except FileExistsError:
-        print(f"directory '{filetype['directory']}' already exists, writing into it")
+        print(f"directory '{PCS_CONF_ID}_{filetype['directory']}' already exists, writing into it")
 
-fd = open("camera_ready.csv", encoding='utf-8-sig') # CSV has BOM
+fd = open(LIST_FILE, encoding='utf-8-sig')  # CSV has BOM
 submissions = DictReader(fd)
 for idx, submission in enumerate(submissions):
     print(f"[{idx}] Paper: {submission['Paper ID']} ({submission['Title']})")
@@ -103,12 +126,14 @@ for idx, submission in enumerate(submissions):
                 print(f"   Retrieving '{filetype['description']}'", end="")
                 try:
                     doi = submission['DOI'].split("/")[-1]  # https://doi.org/10.1145/3491102.3501897 -> 3491102.3501897
-                    filename = f"{filetype['directory']}/{doi}{filetype['suffix']}"
+                    paper_id = submission['Paper ID']
+                    #filename = f"{PCS_CONF_ID}_{filetype['directory']}/{doi}{filetype['suffix']}"
+                    filename = f"{PCS_CONF_ID}_{filetype['directory']}/{paper_id}{filetype['suffix']}"
                     url = submission[filetype['pcs_field']]
                     doc = urlopen(url)
                     doc_size = int(doc.getheader("Content-Length"))
                     print(f" ({doc_size/1000000.0:.2f} MB)")
-                    if os.path.exists(filename): # only download if file changed
+                    if os.path.exists(filename):  # only download if file changed
                         file_size = os.stat(filename).st_size
                         if file_size == doc_size:
                             print("   >... already downloaded")
@@ -122,6 +147,5 @@ for idx, submission in enumerate(submissions):
                 print(f"   >... '{filetype['description']}' not submitted")
         except KeyError:
             print(f"   >... field {filetype['pcs_field']} not in CSV")
-
 fd.close()
 
