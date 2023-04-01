@@ -280,7 +280,10 @@ def check_pdf_doi(html_info, html_text, pdf_info, pdf_text, pcs_id):
     if not pcs_id in DOI:
         return(f"DOI for PCS ID {pcs_id} unknown")
     if pdf_info['DOI'] != DOI[pcs_id]:
-        return(f"DOI might be wrong in PDF: {pdf_info['DOI']} vs. {DOI[pcs_id]}")
+        if len(pdf_info['DOI'].strip()) == 0:
+            return(f"DOI might be missing in PDF. DOI in HTML file: {DOI[pcs_id]}")
+        else:
+            return(f"DOI might be wrong in PDF: {pdf_info['DOI']} vs. {DOI[pcs_id]}")
 
 
 def check_differences_reference_count(html_info, html_text, pdf_info, pdf_text):
@@ -326,7 +329,7 @@ CHECKS = [check_differences_title, check_email, check_ligatures_fi, check_ligatu
 def lint(pdf_file):
     print(f"# Checking {pdf_file}")
     try:
-        pcs_id = re.findall(r'pn[0-9]+', pdf_file)[0]
+        pcs_id = re.findall(r'[a-z]+[0-9]+', pdf_file)[0]
     except:
         print(f"{pdf_file}: PCS ID could not be extracted")
         return

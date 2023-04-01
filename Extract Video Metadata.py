@@ -2,6 +2,7 @@
 
 import json
 import sys
+import sh
 from sh import ffprobe
 from os.path import basename
 from glob import glob
@@ -28,7 +29,10 @@ def streams(metadata):
 
 
 def check(filename, details=False):
-    metadata = get(filename)
+    try:
+        metadata = get(filename)
+    except:
+        return(name, "Error - could not check file - maybe not a video?", "", "", "", "", "", "", "", "")
     name = basename(filename)
     try:
         audio, video = streams(metadata)
@@ -38,7 +42,10 @@ def check(filename, details=False):
         print(data)  
     container = metadata['format']
     duration = str(int(float(container['duration'])))
-    cformat = container['tags']['major_brand']
+    try:
+        cformat = container['tags']['major_brand']
+    except KeyError:
+        cformat = "unknown"
     if video:
         width, height = video['width'], video['height']
         vcodec_name, r_frame_rate = video['codec_name'], video['r_frame_rate']

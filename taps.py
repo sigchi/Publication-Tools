@@ -90,7 +90,7 @@ def get_error(element):
 
 # ########### functions #################
 
-def get_submissions(overwrite=False):
+def get_submissions(overwrite=True):
     if overwrite is False and os.path.exists(LIST_FILE):
         print("file already exists - skipping download")
         return
