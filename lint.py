@@ -5,39 +5,38 @@
 
 INFO = """This script checks for typical problems in the camera-ready version 
 of papers. It assumes that HTML files from TAPS are in "./TAPS_HTML/" and PDF 
-files from PCS are in "./PCS_PDF/"
+files from PCS are in "./${track_id}_PDF/"
 
 Possible problems are printed on stdout.
 Many of them are false positives caused by the inherently difficult extraction of structured
 text from PDF files. Please check manually.
 
-
 """
-
-HTML_DIR = "./TAPS_HTML"
-PDF_DIR = "./PCS_PDF"
 
 ##################################
 
-print(INFO)
-
-#stdlib
-from lxml import etree, html
+# stdlib
+import os
 import re
+import sys
 import glob
-from csv import DictReader
+import shutil
+from csv import DictReader, DictWriter
+from lxml import etree, html
 
 # additional
+from tqdm import tqdm
 import pdfminer
 from pdfminer.pdfdocument import PDFDocument
 from pdfminer.pdfparser import PDFParser
 from pdfminer.high_level import extract_text
 from pdfminer.pdftypes import resolve1
 
+# replace print function wit tqdm
+print = tqdm.write
 
-# for testing purposes
-TEST_PDF = './PCS_PDF/pn1193.pdf'
-TEST_HTML = './TAPS_HTML/pn1193_191.html'
+OUTPUT_DIR = "LINTER_RESULTS"
+SORT_FILES = False  # do not sort files in subfolders per check
 
 
 def stringify_list(a_list):
@@ -57,15 +56,14 @@ def stringify_list(a_list):
 
 
 def get_info_from_html(html_file):
-    print("#get_info_from_html()")
     info = {}
     try:
         root = html.parse(html_file)
     except OSError:
         print(f"    file not found: {html_file}")
-        return info        
+        return info
     body = root.xpath("//section[@class = 'body']")[0]
-    #print(body.text_content())   
+    # print(body.text_content())
     info['CHARACTER COUNT'] = len(body.text_content())
     info['WORD COUNT'] = len(body.text_content().split())
     
@@ -104,7 +102,6 @@ def get_info_from_html(html_file):
 
 
 def extract_html_text(html_file):
-    print("#extract_html_text()")
     try:
         root = html.parse(html_file)
     except OSError:
@@ -116,25 +113,33 @@ def extract_html_text(html_file):
 
 
 def get_info_from_pdf(pdf_file, debug = False):
-    print("#get_info_from_pdf()")
-    
     pdf_info = {}
-    pdf_properties = PDFDocument(PDFParser(open(pdf_file, 'rb'))).info[0]
+    doc = PDFDocument(PDFParser(open(pdf_file, 'rb')))
+    pdf_info["EMBEDDED FILES"] = False
+    try:
+        for xref in doc.xrefs:
+            for objid in xref.get_objids():
+                obj = doc.getobj(objid)
+                if str(obj.get("Type")) == "/'Filespec'":
+                    pdf_info["EMBEDDED FILES"] = True
+    except AttributeError:
+        pass
+    pdf_properties = doc.info[0]
     if 'Creator' in pdf_properties:
         if pdf_properties['Creator'][0] in [0xfe, 0xff]:
             pdf_info['PDF CREATOR'] = pdf_properties['Creator'].decode('utf-16')
         else:
             pdf_info['PDF CREATOR'] = pdf_properties['Creator'].decode('utf-8')
     else:
-        pdf_info['PDF CREATOR'] = "" 
-    if 'Producer' in pdf_properties:    
-        if pdf_properties['Producer'][0] in [0xfe, 0xff]:    
+        pdf_info['PDF CREATOR'] = ""
+    if 'Producer' in pdf_properties:
+        if pdf_properties['Producer'][0] in [0xfe, 0xff]:
             pdf_info['PDF PRODUCER'] = pdf_properties['Producer'].decode('utf-16')
         else:
             pdf_info['PDF PRODUCER'] = pdf_properties['Producer'].decode('utf-8')
     else:
-        pdf_info['PDF PRODUCER'] = "" 
-    
+        pdf_info['PDF PRODUCER'] = ""
+
     text = extract_text(pdf_file)
     references = text[text.find("REFERENCES"):]
     num_references = len(re.findall(r'(^\[[0-9]+\] .*)', references, re.MULTILINE))
@@ -226,7 +231,6 @@ def get_info_from_pdf(pdf_file, debug = False):
 
 
 def get_pdf_catalog(pdf_file):
-    print("#get_pdf_catalog()()")
     fp = open(pdf_file, 'rb')
     parser = PDFParser(fp)
     doc = PDFDocument(parser)
@@ -234,35 +238,65 @@ def get_pdf_catalog(pdf_file):
     return catalog
 
 
-# Attention: most of the checks below don't work very well due to difficulties in extracting text from PDF
+# Attention: some of the checks below don't work very well due to difficulties in extracting text from PDF
 
-def check_form_fields(pdf_catalog):
+def check_pdf_difference_taps_pdf(data):
+    pcs_size = os.stat(data["pdf_file"]).st_size
+    taps_size = os.stat(data["taps_pdf_file"]).st_size
+    if pcs_size == taps_size:
+        return "File sizes in TAPS and PCS are identical - probably no accessibility check done."
+    if pcs_size / taps_size > 1.2 or pcs_size / taps_size < 0.8:
+        return f"File sizes in TAPS ({taps_size/1000000.0:.2f} MB.) and PCS ({pcs_size/1000000.0:.2f} MB). differ by more than 20% - maybe not the same file."
+
+
+def check_pdf_size(data):
+    pcs_size = os.stat(data["pdf_file"]).st_size
+    if pcs_size > 1000*1000*70:
+        return f"PDF file larger than 70 MB: {pcs_size/1000000.0:.2f} MB."
+    if pcs_size < 1000*100:
+        return f"PDF file smaller than 100 kB - maybe corrupted: {pcs_size/1000000.0:.2f} MB."
+
+
+# works reliably
+def check_form_fields(data):
     try:
-        fields = resolve1(pdf_catalog['AcroForm'])['Fields']
+        fields = resolve1(data['pdf_catalog']['AcroForm'])['Fields']
         if len(fields) > 0:
             return "The paper contains form fields."
     except:
         return
 
 
-def check_ligatures_fi(html_info, html_text, pdf_info, pdf_text):
-    if html_text.find("fi") != -1 and pdf_text.find("fi") == -1:
+# works reliably
+def check_embedded_files(data):
+    if data['pdf_info']['EMBEDDED FILES']:
+        return f"PDF contains embedded files (typically reports from the Acrobat accessibility checker."
+
+
+# works reliably
+def check_ligatures_fi(data):
+    if data['html_text'].find("fi") != -1 and data['pdf_text'].find("fi") == -1:
         return "Accessibility: the PDF plain text does not contain the letters 'fi' (but HTML does). Please check whether ligatures are encoded correctly."
 
 
-def check_ligatures_ff(html_info, html_text, pdf_info, pdf_text):
-    if html_text.find("ff") != -1 and pdf_text.find("ff") == -1:
+# works reliably
+def check_ligatures_ff(data):
+    if data['html_text'].find("ff") != -1 and data['pdf_text'].find("ff") == -1:
         return "Accessibility: the PDF plain text does not contain the letters 'ff' (but HTML does). Please check whether ligatures are encoded correctly."
 
-def check_ligatures_qu(html_info, html_text, pdf_info, pdf_text):
-    if html_text.find("Qu") != -1 and pdf_text.find("Qu") == -1:
+
+# works reliably
+def check_ligatures_qu(data):
+    if data['html_text'].find("Qu") != -1 and data['pdf_text'].find("Qu") == -1:
         return "Accessibility: the PDF plain text does not contain the letters 'Qu' (but HTML does). Please check whether ligatures are encoded correctly."
 
 
-
-def check_pdf_creator(html_info, html_text, pdf_info, pdf_text):
-    if pdf_info['PDF CREATOR'] not in ['LaTeX with acmart 2022/10/24 v1.88 Typesetting articles for the Association for Computing Machinery and hyperref 2022-02-21 v7.00n Hypertext links for LaTeX', 'LaTeX with hyperref']:
-        return f"This PDF has not been generated by TAPS ('Producer' field in metadata says: {pdf_info['PDF CREATOR']})"
+TAPS_PDF_CREATORS = ['LaTeX with acmart 2022/10/24 v1.88 Typesetting articles for the Association for Computing Machinery and hyperref 2022-02-21 v7.00n Hypertext links for LaTeX', 
+                     'LaTeX with hyperref']
+# extracts info reliably but it seems that a different PDF Creator may also be caused by TAPS staff
+def check_pdf_creator(data):
+    if data['pdf_info']['PDF CREATOR'] not in TAPS_PDF_CREATORS:
+        return f"This PDF has not been generated by TAPS ('Producer' field in metadata says: {data['pdf_info']['PDF CREATOR']})"
 
 
 def get_doi_list(csvfile):
@@ -270,47 +304,68 @@ def get_doi_list(csvfile):
     with open(csvfile) as fd:
         dr = DictReader(fd)
         for paper in dr:
-            doi[paper['PCS_ID']] = paper['DOI']
-            
+            doi[paper['PCS_ID']] = paper['DOI']            
     return doi
+
 
 DOI = get_doi_list('./taps_procs.csv')
 
-def check_pdf_doi(html_info, html_text, pdf_info, pdf_text, pcs_id):
-    if not pcs_id in DOI:
+
+# works semi-reliably - if it finds a wrong DOI, it is usually right
+def check_pdf_doi(data):
+    pcs_id = data['pcs_id']
+    if pcs_id not in DOI:
         return(f"DOI for PCS ID {pcs_id} unknown")
-    if pdf_info['DOI'] != DOI[pcs_id]:
-        if len(pdf_info['DOI'].strip()) == 0:
+    if data['pdf_info']['DOI'] != DOI[pcs_id]:
+        if len(data['pdf_info']['DOI'].strip()) == 0:
             return(f"DOI might be missing in PDF. DOI in HTML file: {DOI[pcs_id]}")
         else:
-            return(f"DOI might be wrong in PDF: {pdf_info['DOI']} vs. {DOI[pcs_id]}")
+            return(f"DOI might be wrong in PDF: {data['pdf_info']['DOI']} vs. {DOI[pcs_id]}")
 
 
-def check_differences_reference_count(html_info, html_text, pdf_info, pdf_text):
-    hr = html_info['REFERENCE COUNT']
-    pr = pdf_info['REFERENCE COUNT']
+# works reliably
+def check_line_length(data):
+    line_lengths = [len(line) for line in data['pdf_text'].splitlines()]
+    line_count = len(line_lengths)
+    median = sorted(line_lengths)[line_count//2]
+    # print(f"Median line length: {median}")
+    if median > 60 + 20:  # median line length in two columns: 60 - 65 chars
+        return f"Single-column format or incorrectly tagged PDF (median line length is {median})."
+    elif median < 40:  # median line length in two columns: 60 - 65 chars
+        return f"Strange! Median line length is less than 40 ({median}) - which should not happen in the ACM two-column layout."
+
+
+# unreliable
+def check_differences_reference_count(data):
+    hr = data['html_info']['REFERENCE COUNT']
+    pr = data['pdf_info']['REFERENCE COUNT']
     if hr != pr:
         return f"Different number of references found in HTML ({hr}) and PDF ({pr}). Please check."
 
-def check_differences_author_count(html_info, html_text, pdf_info, pdf_text):
-    ha = html_info['AUTHOR COUNT']
-    pa = pdf_info['AUTHOR COUNT']
+
+# unreliable
+def check_differences_author_count(data):
+    ha = data['html_info']['AUTHOR COUNT']
+    pa = data['pdf_info']['AUTHOR COUNT']
     if ha != pa:
         return f"Different number of authors found in HTML ({ha}) and PDF ({pa}). Probably a parsing error of our script. Please check."
 
-def check_differences_title(html_info, html_text, pdf_info, pdf_text):    
-    ht = html_info['TITLE'].strip()
-    pt = pdf_info['TITLE'].strip()
-    pt = pt[0:min(len(pt), len(ht))] # pdf title sometimes contains content from next line
+
+# mostly reliable - however, many false positives due to "accessibility" problem
+def check_differences_title(data):
+    ht = data['html_info']['TITLE'].strip()
+    pt = data['pdf_info']['TITLE'].strip()
+    pt = pt[0:min(len(pt), len(ht))]  # pdf title sometimes contains content from next line
     ht_clean = ht.replace("’", "'").replace('“', '"').replace('”', '"')
     pt_clean = pt.replace("’", "'").replace('“', '"').replace('”', '"')
     if ht_clean != pt_clean:
-        return f"Different titles in HTML and PDF. Please check:\n{ht}\n{pt}"   
+        return f"Different titles in HTML and PDF. Please check:\n    {ht}\n    {pt}"   
 
 
-def check_email(html_info, html_text, pdf_info, pdf_text):
-    authors = pdf_info['AUTHORS']
-    num_authors = pdf_info['AUTHOR COUNT']
+# quite reliable - some false positives
+def check_email(data):
+    authors = data['pdf_info']['AUTHORS']
+    num_authors = data['pdf_info']['AUTHOR COUNT']
     emails = 0
     for author in authors:
         for line in author:
@@ -323,59 +378,101 @@ def check_email(html_info, html_text, pdf_info, pdf_text):
         #return f"Only {emails}/{num_authors} authors have an email address!"
 
 
-CHECKS = [check_differences_title, check_email, check_ligatures_fi, check_ligatures_ff, check_ligatures_qu, check_pdf_creator, check_differences_reference_count]
+CHECKS = [check_embedded_files, check_line_length, check_differences_title, check_email, 
+          check_ligatures_fi, check_ligatures_ff, check_ligatures_qu, check_pdf_creator, 
+          check_differences_reference_count, check_pdf_doi, check_form_fields, 
+          check_pdf_difference_taps_pdf, check_pdf_size]
 
 
 def lint(pdf_file):
     print(f"# Checking {pdf_file}")
+    data = {}
+    data["pdf_file"] = pdf_file
     try:
-        pcs_id = re.findall(r'[a-z]+[0-9]+', pdf_file)[0]
+        pcs_id = re.findall(r'[a-z]+[0-9]+', pdf_file.split("/")[-1])[0]
+        data["pcs_id"] = pcs_id
     except:
         print(f"{pdf_file}: PCS ID could not be extracted")
         return
     try:
         html_file = glob.glob(f'{HTML_DIR}/{pcs_id}*.html')[0]
+        data["html_file"] = html_file
     except:
-        print(f"{pdf_file}: HTML file not found")
+        print(f"Error: {pdf_file} ({pcs_id}): HTML file not found - aborting")
         return
-    print("#extract_text()")
-    pdf_text = extract_text(pdf_file)
-    pdf_info = get_info_from_pdf(pdf_file)
-    pdf_catalog = get_pdf_catalog(pdf_file)
-    html_text = extract_html_text(html_file)
-    html_info = get_info_from_html(html_file)
-    errors = []
-    for check in CHECKS:
-        ret = check(html_info, html_text, pdf_info, pdf_text)
-        if ret:
-            errors.append(ret)
-    # only check that needs pcs_id        
-    ret = check_pdf_doi(html_info, html_text, pdf_info, pdf_text, pcs_id)
-    if ret:
-            errors.append(ret)
-    ret = check_form_fields(pdf_catalog)
-    if ret:
-            errors.append(ret)
+    try:
+        taps_pdf_file = glob.glob(f'{TAPS_PDF_DIR}/{pcs_id}*.pdf')[0]
+        data["taps_pdf_file"] = taps_pdf_file
+    except:
+        print(f"Warning: {pdf_file} ({pcs_id}): TAPS PDF file not found")
+    data["pdf_text"] = extract_text(pdf_file)
+    data["pdf_info"] = get_info_from_pdf(pdf_file)
+    data["pdf_catalog"] = get_pdf_catalog(pdf_file)
+    data["html_text"] = extract_html_text(html_file)
+    data["html_info"] = get_info_from_html(html_file)
 
-    if len(errors) > 0:
-        print(f"{pcs_id}: ", end="")
-        print(f"\n{pcs_id}: ".join(errors))
+    errors = {}
+    for check in CHECKS:
+        error = check(data)
+        errors[check.__name__] = error
+        if SORT_FILES and error:
+            destination_dir = f"{OUTPUT_DIR}/{check.__name__}_failed"
+            os.makedirs(destination_dir, exist_ok=True)
+            shutil.copy2(pdf_file, destination_dir)
+    
+
+    # only check that needs pcs_id
+    #errors["check_pdf_doi"] = check_pdf_doi(html_info, html_text, pdf_info, pdf_text, pcs_id)
+    # only check that needs PDF catalog
+   # errors["check_form_fields"] = check_form_fields(pdf_catalog)
+    # only check that needs TAPS PDF
+    #errors["check_pdf_difference_taps_pdf"] = check_pdf_difference_taps_pdf(pdf_file, taps_pdf_file)
+    # only check that needs only PCS PDF
+    #errors["check_pdf_size"] = check_pdf_size(pdf_file)
+    if any(errors.values()):
+        for typ, message in errors.items():
+            if message:
+                print(f"{pcs_id}: {typ}: {message}")
     else:
         print(f"#{pcs_id}: OK!")
-        pass
+    errors["PCS ID"] = pcs_id  #   hand id back to calling function
+    errors["PDF file"] = pdf_file  
+    errors["Title"] = data['pdf_info']['TITLE']  
+    return(errors)  
 
 
-pdf_files = sorted(glob.glob(f'{PDF_DIR}/*.pdf'))
-#html_files = glob.glob(f'{HTML_DIR}/*.html') # currently we only iterate over the PDF files
+if len(sys.argv) < 2:
+    print("Please provide PDF directory as parameter")
+    sys.exit(1)
+
+HTML_DIR = "./TAPS_HTML"
+# html_files = glob.glob(f'{HTML_DIR}/*.html') # currently we only iterate over the PDF files
+TAPS_PDF_DIR = "./TAPS_PDF"
+
+PDF_DIR = None  # also use as flag for whether we check a whole dir
+
+if len(sys.argv) == 2 and not sys.argv[1].endswith(".pdf"):  # directory given
+    PDF_DIR = f"{sys.argv[1]}"
+    pdf_files = sorted(glob.glob(f'{PDF_DIR}/*.pdf'))
+    if len(pdf_files) == 0:
+        print(f"No PDF files found in {PDF_DIR}.")
+        sys.exit(1)
+else:  # individual files given
+    pdf_files = sys.argv[1:]
+
 
 print("# I'm linting!")
-for pdf_file in pdf_files:
+error_list = []
+for pdf_file in tqdm(pdf_files):
     try:
-        lint(pdf_file)
+        error_list.append(lint(pdf_file))
         print("")
     except Exception as e:
         print(f'{pdf_file} couldn\'t be to automatically checked: ', end="")
         print(e)
-
-
-
+        error_list.append({'pdf_file': pdf_file})
+    if PDF_DIR:
+        with open(f"{PDF_DIR.strip('/').replace('/','_')}.lint.csv", 'w') as fd:
+            dw = DictWriter(fd, error_list[0].keys(), restval='x')
+            dw.writeheader()
+            dw.writerows(error_list)
