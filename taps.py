@@ -24,14 +24,18 @@ print(INFO)
 # stdlib
 from lxml import etree
 import re
+import time
 import os
 import sys
 from csv import DictWriter, DictReader
 import getpass
-from urllib.request import urlretrieve, HTTPError
+from urllib.request import urlopen, urlretrieve, HTTPError
 
 # additional
 import requests
+
+from tqdm import tqdm
+print = tqdm.write
 
 
 CONF_ID = os.environ.get('CONF_ID') or input("Conference ID: ")
@@ -47,6 +51,12 @@ LIST_FILE = "taps_procs.csv"
 
 
 # ############ Helper functions ##################
+
+def file_is_current(file_path, max_seconds=300):
+    file_mtime = os.path.getmtime(file_path)
+    current_time = time.time()
+    return (current_time - file_mtime) < max_seconds
+
 
 def get_pdf(element):
     try:
@@ -94,6 +104,10 @@ def get_submissions(overwrite=True):
     if overwrite is False and os.path.exists(LIST_FILE):
         print("file already exists - skipping download")
         return
+    if file_is_current(LIST_FILE):
+        print("file downloaded within last 5 minutes - skipping download")
+        return
+
     print("Logging in...")
     session = requests.Session()
     r = session.get(SESSION_PAGE)
@@ -120,7 +134,9 @@ def get_submissions(overwrite=True):
                 d["HTML_URL"] = get_html(row.getchildren()[i])
                 d["ERROR_URL"] = get_error(row.getchildren()[i])
             elif row.getchildren()[i].text:
-                d[cols[i]] = row.getchildren()[i].text.strip()
+                d[cols[i]] = row.getchildren()[i].text.strip()    
+                # FIXME: for some reason, Aptara put some paper titles which start with '"' within a further "<blnk>" element. For these, an empty title is returned. 
+                # Not a huge problem, however, as we do not use the title from TAPS anywhere
             else:
                 d[cols[i]] = ""
         print(f"getting metadata for paper {d['PAPER ID']} ({d['TITLE']})")
@@ -130,7 +146,7 @@ def get_submissions(overwrite=True):
         d["DOI"] = metadata[12]
         data.append(d)
 
-    print(cols)
+    #print(cols)
     cols += ["PDF_URL", "HTML_URL", "ERROR_URL", "METADATA", "PCS_ID", "DOI"]
     cols.remove("ACTIONS")
 
@@ -142,14 +158,51 @@ def get_submissions(overwrite=True):
     return data
 
 
+def download_file(paper_id, url, filename, overwrite="modified"):
+    try:
+        doc = None
+        # avoid unnecessary downloads
+        if overwrite == "none":
+            if os.path.exists(filename):  # only download if file changed
+                tqdm.write("   >... already downloaded")
+                return True
+        elif overwrite == "modified":
+            doc = urlopen(url, timeout=10)
+            doc_size = int(doc.getheader("Content-Length"))
+            if os.path.exists(filename):  # only download if file changed
+                file_size = os.stat(filename).st_size
+                if file_size == doc_size:
+                    tqdm.write("   >... already downloaded and not changed on server")
+                    return True
+        # ok, we want to download the file. make request if not already done
+        if not doc:
+            doc = urlopen(url, timeout=10)
+            doc_size = int(doc.getheader("Content-Length"))
+        with open(filename, 'wb') as fd:
+            #print(f" ({doc_size/1000000.0:.2f} MB)")
+            progress_bar = tqdm(total=doc_size, unit='iB', unit_scale=True, leave=False)
+            while True:
+                data = doc.read(1024*100)
+                if not data:
+                    break
+                fd.write(data)
+                progress_bar.update(len(data))
+            progress_bar.close()
+            return True
+    except (ValueError, HTTPError) as e:
+        tqdm.write("   >... file not found on server")
+        print(str(e))
+        return False
+
+
+
 def download_files(data, filetypes, overwrite=False):
     for filetype in filetypes:
         try:
             os.makedirs(filetype['dir'])
         except FileExistsError:
             print(f"directory '{filetype['dir']}' already exists, writing into it")
-    for paper in data:
-        #pcs_id = paper['METADATA'].splitlines()[9]
+    for paper in tqdm(data):
         pcs_id = paper['PCS_ID']
         taps_id = paper['PAPER ID']
         print(f"Paper: {pcs_id} (TAPS ID: {taps_id})")
@@ -157,14 +210,8 @@ def download_files(data, filetypes, overwrite=False):
             if len(paper[filetype['field']]) > 1:
                 url = paper[filetype['field']]
                 filename = f"{filetype['dir']}/{pcs_id}_{taps_id}.{filetype['ext']}"
-                if os.path.exists(filename) and not overwrite:
-                    print(f"{filename} already exists. Skipping...")
-                else:
-                    print(f"Retrieving {filetype['ext']} file: {paper[filetype['field']]}")
-                    try:
-                        urlretrieve(paper[filetype['field']], f"{filetype['dir']}/{pcs_id}_{taps_id}.{filetype['ext']}")
-                    except (ValueError, HTTPError):
-                        print("   >... not found on server")
+                print(f"Retrieving {filetype['ext']} file: {paper[filetype['field']]}")
+                download_file(taps_id, url, filename)
             else:
                 print("   >... not submitted")
 
