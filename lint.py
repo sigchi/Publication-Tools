@@ -32,11 +32,15 @@ from pdfminer.pdfparser import PDFParser
 from pdfminer.high_level import extract_text
 from pdfminer.pdftypes import resolve1
 
-# replace print function wit tqdm
-print = tqdm.write
+# replace print function with tqdm
+#print = tqdm.write
+
+def print(thing, end="\n"):
+    tqdm.write(str(thing), end=end)
 
 OUTPUT_DIR = "LINTER_RESULTS"
-SORT_FILES = False  # do not sort files in subfolders per check
+SORT_FILES = True  # sort files with failed checks in subfolders per check (warning: may lead to many duplicates of each file)
+# SORT_FILES = False  # do not sort files in subfolders per check
 
 
 def stringify_list(a_list):
@@ -399,12 +403,17 @@ def lint(pdf_file):
         data["html_file"] = html_file
     except:
         print(f"Error: {pdf_file} ({pcs_id}): HTML file not found - aborting")
-        return
+        errors = {}
+        errors["PCS ID"] = pcs_id  #   hand id back to calling function
+        errors["PDF file"] = pdf_file  
+        errors["Title"] = "TAPS HTML file not found!"  
+        raise RuntimeError("TAPS HTML not found")
     try:
         taps_pdf_file = glob.glob(f'{TAPS_PDF_DIR}/{pcs_id}*.pdf')[0]
         data["taps_pdf_file"] = taps_pdf_file
     except:
-        print(f"Warning: {pdf_file} ({pcs_id}): TAPS PDF file not found")
+        print(f"Warning: {pdf_file} ({pcs_id}): TAPS PDF file not found - aborting")
+        raise RuntimeError("TAPS PDF not found")
     data["pdf_text"] = extract_text(pdf_file)
     data["pdf_info"] = get_info_from_pdf(pdf_file)
     data["pdf_catalog"] = get_pdf_catalog(pdf_file)
@@ -470,7 +479,7 @@ for pdf_file in tqdm(pdf_files):
     except Exception as e:
         print(f'{pdf_file} couldn\'t be to automatically checked: ', end="")
         print(e)
-        error_list.append({'pdf_file': pdf_file})
+        error_list.append({'PDF file': pdf_file})
     if PDF_DIR:
         with open(f"{PDF_DIR.strip('/').replace('/','_')}.lint.csv", 'w') as fd:
             dw = DictWriter(fd, error_list[0].keys(), restval='x')
