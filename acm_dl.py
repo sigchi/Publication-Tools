@@ -3,9 +3,9 @@
 # Public Domain / CC-0
 # (0) 2022 Raphael Wimmer <raphael.wimmer@ur.de>
 
-#CHUNK_SIZE = 5*1024*1024
-CHUNK_SIZE = 1*1024*1024
-PACKET_SIZE = 128*1024
+CHUNK_SIZE = 5*1024*1024
+#CHUNK_SIZE = 1*1024*1024
+PACKET_SIZE = 1024*1024
 
 
 # https://github.com/psf/requests/issues/2181
@@ -107,7 +107,11 @@ def get_token():
         return "TOKENTEST"
     TOKEN_URL = f"https://acmsubmit.acm.org/videosubmission.cfm?proceedingID={PROCEEDING_ID}"
     r = requests.get(TOKEN_URL)
-    token = re.search(r'data-token="([a-zA-Z0-9=]+)"', r.text).groups()[0]
+    tokens = re.search(r'data-token="([a-zA-Z0-9=]+)"', r.text).groups()
+    if tokens:
+        token = tokens[0]
+    else:
+        raise RuntimeError("Token not available - is the portal currently ready for uploads?")
     assert token
     #print(f"Token: {token}")
     return token
