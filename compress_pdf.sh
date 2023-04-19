@@ -12,7 +12,7 @@ for file in "$@"; do
   TMP_OUT=$(mktemp)
   cp "${filename}.${ext}" "${TMP_IN}"
   gs -dNOPAUSE -dBATCH -sDEVICE=pdfwrite -dCompatibilityLevel=1.4 -dPDFSETTINGS=/"${COMPRESSION}" -sOutputFile="${TMP_OUT}" "${TMP_IN}"
-  mv "${TMP_OUT}" "${filename}-small.${ext}"
+  mv "${TMP_OUT}" "${filename}-compressed.${ext}"
   rm "${TMP_IN}"
 done
 
