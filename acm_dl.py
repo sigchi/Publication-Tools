@@ -24,7 +24,7 @@ import requests
 import re
 import os
 import sys
-from csv import DictReader
+from csv import DictReader, DictWriter
 import webvtt
 from lxml import etree
 
@@ -51,6 +51,8 @@ SUBMIT_URL = "https://acmsubmit.acm.org/videosubmission2.cfm"
 TAPS_CSV = "./taps_procs.csv" # contains the DOIs - used as fallback 
 LIST_FILE_SUFFIX = "_camera_ready.csv"
 FIELDS_FILE_SUFFIX = "_fields.csv"
+
+CACHE = None # only set once we have the PROCEEDING_ID
 
 def get_doi_list(csvfile):
     doi = {}
@@ -98,8 +100,8 @@ def srt_to_vtt(filename):
             w = webvtt.from_srt(filename)
             w.save(filename)
             print("    caption file converted to VTT")
-        except (webvtt.errors.MalformedFileError, webvtt.errors.MalformedCaptionError):
-            print("    caption file, skipping conversion!")
+        except (webvtt.errors.MalformedFileError, webvtt.errors.MalformedCaptionError, UnicodeDecodeError):
+            print("    no caption file, skipping conversion!")
 
 
 def get_token():
@@ -242,7 +244,7 @@ def upload_submission(track_id, sub, filetypes, already_uploaded_files):
         commit_submission(uploader_name, uploader_email, doi, commit_description, filenames_urls)           
         print("    Done")
 
-
+# include_excluded = False so that we can upload new revisions of files by excluding the old version
 def get_uploaded_submissions(conf_id, include_excluded=False):
     print("Getting already uploaded submissions")
     URL=f"https://acmsubmit.acm.org/atyponListing.cfm?proceedingID={conf_id}"
@@ -256,6 +258,10 @@ def get_uploaded_submissions(conf_id, include_excluded=False):
         submission= {}
         excluded = row[0][0].tail.endswith("excluded")
         submission['excluded'] = excluded
+        submission['Edit URL'] = row[0][0].attrib['href']
+        skinny_id_string = submission['Edit URL'].split('&')[-1]
+        assert(skinny_id_string.split('=')[0] == 'skinnyID')
+        submission['skinnyID'] = skinny_id_string.split('=')[1]
         submission['Paper ID'] = row[1].text
         submission['Load Date'] = row[2].text
         submission['Contact'] = row[3][0].text
@@ -265,7 +271,10 @@ def get_uploaded_submissions(conf_id, include_excluded=False):
         submission['File Name'] = row[6][0].text
         submission['File URL'] = row[6][0].attrib['href']
         submissions.append(submission)
-
+    with open(CACHE,'w') as fd:
+        dw = DictWriter(fd, submissions[0].keys())
+        dw.writeheader()
+        dw.writerows(submissions)
     already_uploaded = submissions
     already_uploaded_without_excluded = [d for d in submissions if not d['excluded']]
     excluded = [d for d in submissions if d['excluded']]
@@ -290,11 +299,36 @@ def print_help():
     print("...")
 
 def list_status():
-    for sub in get_uploaded_submissions(PROCEEDING_ID):
+    for sub in get_uploaded_submissions(PROCEEDING_ID,include_excluded=True):
         print(f"{sub['File Name']} - {sub['File Description']} for {sub['Paper ID']} ({sub['File URL']})")
 
 def download():
     print("Not implemented yet")
+
+
+# e.g., filename: pn1234-supplementary-files.zip or similar
+
+def exclude(query, submissions, column="File Name"):
+    # find correct file
+    selected_submissions = []
+    for submission in submissions:
+        if submission[column] == query:
+            selected_submissions.append(submission)
+    print("Excluding the following submissions:")
+    print(str(selected_submissions))
+    input("Press Enter to proceed")
+    for submission in selected_submissions:
+        url = 'https://acmsubmit.acm.org/' + submission['Edit URL']
+        print(url)
+        data = {'proceedingID': PROCEEDING_ID,
+                'doi'         : submission['DOI'],
+                'skinnyID'    : submission['skinnyID'],
+                'fileDescription': submission['File Description'],
+                'exclude'     : 'on',
+                'submit'      : 'Submit'
+                }
+        r = requests.post(url, data=data)
+        assert(r.status_code == 300)
 
 
 if __name__ == "__main__":
@@ -302,9 +336,17 @@ if __name__ == "__main__":
         print_help()
     else:
         PROCEEDING_ID = int(sys.argv[2])
+        CACHE = f"{PROCEEDING_ID}.cache.csv"
 
         if sys.argv[1] == "list":
             list_status()
+        elif sys.argv[1] == "exclude":
+            if os.path.exists(CACHE):
+                with open(CACHE) as fd:
+                    submissions = [row for row in DictReader(fd)]
+            else:
+                submissions = get_uploaded_submissions(PROCEEDING_ID)
+            exclude(sys.argv[3], submissions)
         elif sys.argv[1] == "download":
             download()
         elif sys.argv[1] == "upload":
