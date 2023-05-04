@@ -166,9 +166,12 @@ You should typically ignore `check_differences_reference_count`. The check for l
 ## acm_dl.py
 
 This Python script uploads supplementary files from/to ACMs Atypon system.
-It automatically recognizes whether a files has already been uploaded - unless you manually change the description of an uploaded file.
+It automatically recognizes whether a file has already been uploaded - unless you manually change the description of an uploaded file.
+If files have been marked as 'excluded', they are ignored, i.e., a new version of that file can be uploaded with the same description.
 
-- `acm_dl.py upload 12345 chi23b video` - uploads (for Proceeding ID 12345) all `video` files for track `chi23b`. Uses data from the fields csv
+- `acm_dl.py list 12345` - downloads a list of all files that have already been uploaded for proceeding 12345 and saves it as `12345.cache.csv`
+- `acm_dl.py upload 12345 chi23b video` - uploads (for Proceeding ID 12345) all `video` files for track `chi23b`. Uses data from the fields csv. Filenames of uploaded files are named `<DOI-part>-<description>.<ext>`, e.g., `323443.24231-video-figure.mp4`. This is how ACM prefers it.
+- `acm_dl.py exclude 12345 pn1234-video-figure.mp4` - marks all uploaded versions of this file as excluded. Function can be extended to select uploads by DOI or uploader instead. For performance reasons, this command uses the cache-csv downloaded by `acm_dl.py list` instead of getting the list of uploaded files each time.
 
 
 ## check_video.py
