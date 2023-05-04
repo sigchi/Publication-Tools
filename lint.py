@@ -296,6 +296,7 @@ def check_ligatures_qu(data):
 
 
 TAPS_PDF_CREATORS = ['LaTeX with acmart 2022/10/24 v1.88 Typesetting articles for the Association for Computing Machinery and hyperref 2022-02-21 v7.00n Hypertext links for LaTeX', 
+                     'LaTeX with acmart 2023/03/30 v1.90 Typesetting articles for the Association for Computing Machinery and hyperref 2022-02-21 v7.00n Hypertext links for LaTeX',
                      'LaTeX with hyperref']
 # extracts info reliably but it seems that a different PDF Creator may also be caused by TAPS staff
 def check_pdf_creator(data):
