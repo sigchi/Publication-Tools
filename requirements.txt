@@ -2,4 +2,4 @@ click
 requests
 tqdm
 webvtt
-
+pdfminer
