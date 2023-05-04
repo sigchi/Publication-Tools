@@ -53,6 +53,8 @@ LIST_FILE = "taps_procs.csv"
 # ############ Helper functions ##################
 
 def file_is_current(file_path, max_seconds=300):
+    if not os.path.exists(file_path):
+        return False
     file_mtime = os.path.getmtime(file_path)
     current_time = time.time()
     return (current_time - file_mtime) < max_seconds
