@@ -194,4 +194,5 @@ simple helper to rename files from PCS ID to TAPS ID (for submission to Aptara)
 
 small helper to convert subtitle files into the `.vtt` format required by ACM.
 
-
+# Acknowledgments
+Thanks to [Raphael Wimmer](http://raphael.cc) for the amazing work of coding the initial code base of this repository for CHI'22 and CHI'23.
