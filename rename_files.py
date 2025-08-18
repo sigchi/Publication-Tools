@@ -8,7 +8,8 @@ import shutil
 from csv import DictReader
 
 src_dir = sys.argv[1] 
-dst_dir = sys.argv[2] 
+dst_dir = sys.argv[2]
+conf = sys.argv[3]
 
 CSV_FILE = "./taps_procs.csv"
 
@@ -34,9 +35,9 @@ for f in glob.glob(f"{src_dir}/*.pdf"):
     assert(taps_id or pcs_id)
     if taps_id:
         print("Moving:", taps_id, taps_to_pcs_id[taps_id])
-        shutil.copy2(f, f"{dst_dir}/{taps_to_pcs_id[taps_id]}.pdf")
+        shutil.copy2(f, f"{dst_dir}/{conf}-{taps_to_pcs_id[taps_id]}.pdf")
     elif pcs_id:
         print("Moving:", pcs_id, pcs_to_taps_id[pcs_id])
-        shutil.copy2(f, f"{dst_dir}/{pcs_to_taps_id[pcs_id]}.pdf")
+        shutil.copy2(f, f"{dst_dir}/{conf}-{pcs_to_taps_id[pcs_id]}.pdf")
 
 

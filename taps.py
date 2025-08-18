@@ -39,11 +39,12 @@ print = tqdm.write
 
 
 CONF_ID = os.environ.get('CONF_ID') or input("Conference ID: ")
+PROC_ID = os.environ.get('PROC_ID') or input("Proceedings ID: ")
 SESSION_PAGE = 'https://camps.aptaracorp.com/ACMConference/'
 LOGIN_PAGE = 'https://camps.aptaracorp.com/ACMConference/login.html'
-METADATA_PAGE = 'https://camps.aptaracorp.com/ACMConference/showpaperdetails.html?proceeding_ID=' + CONF_ID + '&paper_Id='
+METADATA_PAGE = 'https://camps.aptaracorp.com/ACMConference/showpaperdetails.html?event_ID=' + CONF_ID + '&proceeding_ID=' + PROC_ID + '&paper_Id='
 METADATA_SPREADSHEET = 'https://camps.aptaracorp.com/ACMConference/downloadmetadata.html?proceedingId=' + CONF_ID
-PROC_PAGE = 'https://camps.aptaracorp.com/ACMConference/showcopyrightpapers.html?proceeding_ID=' + CONF_ID + '&event_id=15896&workshop_id=0'
+PROC_PAGE = 'https://camps.aptaracorp.com/ACMConference/showcopyrightpapers.html?event_ID=' + CONF_ID + '&workshop_id=0&proceeding_ID=' + PROC_ID
 
 USER_LOGINNAME = os.environ.get('TAPS_USER') or input("TAPS user; ")
 PASSWORD = os.environ.get('TAPS_PASSWORD') or getpass.getpass("TAPS password: ")
@@ -62,7 +63,7 @@ def file_is_current(file_path, max_seconds=300):
 
 def get_pdf(element):
     try:
-        s = element.xpath("a/img[@title = 'PDF Open']")[0].attrib['onclick']
+        s = element.xpath("a/img[@title = 'PDF Open']/..")[0].attrib['onclick']
         x = re.match(r".*openfile\(('.*')\)", s).groups()[0]
         components = list(map(lambda s: s.strip("'"), x.split(',')))
         url = "https://camps.aptaracorp.com/" + components[1] + "/" + components[2]
@@ -72,7 +73,7 @@ def get_pdf(element):
     
 def get_html(element):
     try:
-        s = element.xpath("a/img[@title = 'View HTML']")[0].attrib['onclick']
+        s = element.xpath("a/img[@title = 'View HTML']/..")[0].attrib['onclick']
         x = re.match(r".*showhtml5\(('.*')\)", s).groups()[0]
         components = list(map(lambda s: s.strip("'"), x.split(',')))
         url = "https://camps.aptaracorp.com/" + components[1] + "/" + components[2]
@@ -90,7 +91,7 @@ def get_status(element):
 
 def get_error(element):
     try:
-        s = element.xpath("a/img[@title = 'Error/Warning']")[0].attrib['onclick']
+        s = element.xpath("a/img[@title = 'Error/Warning']/..")[0].attrib['onclick']
         x = re.match(r".*showerrorlog\(('.*')\)", s).groups()[0]
         components = list(map(lambda s: s.strip("'"), x.split(',')))
         proc_id, paper_id, strip_acronym, filename, uid = components
@@ -116,7 +117,7 @@ def get_submissions(overwrite=True):
     # select_dashboard: 1 = Proceedings, 2 = PACM
     r = session.post(LOGIN_PAGE, data={'user_loginname': USER_LOGINNAME, 'password': PASSWORD, 'select_dashboard': '1', 'button2': 'Login'})
     print("Retrieving list of papers (might take up to one minute - TAPS is slow) ...")
-    r = session.get(PROC_PAGE)
+    r = session.post(PROC_PAGE)
     root = etree.HTML(r.text)
     rows = root.xpath("//table[@id = 'ce_data']/tbody/tr")
     headers = root.xpath("//table[@id = 'ce_data']/thead/tr/th/div")

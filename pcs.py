@@ -33,7 +33,7 @@ def validate_track_id(track):
 PCS_LOGIN_URL = "https://new.precisionconference.com/user/login"
 PCS_TRACK_LIST_URL = "https://new.precisionconference.com/get_table?table_id=user_chairing&conf_id=&type_id="
 PCS_SPREADSHEET_URL_PREFIX = "https://new.precisionconference.com/"
-PCS_SPREADSHEET_URL_SUFFIX = "/pubchair/csv/camera"
+PCS_SPREADSHEET_URL_SUFFIX = "/csv/camera"
 LIST_FILE_SUFFIX = "_camera_ready.csv"
 FIELDS_FILE_SUFFIX = "_fields.csv"
 
@@ -76,17 +76,32 @@ def get_camera_ready_csv(track_id, user, password, overwrite=True):
     if overwrite is False and os.path.exists(list_file):
         print("file already exists - skipping download")
         return
-    if os.path.exists(list_file) and file_is_current(list_file, 5 * 60):
-        print("file already downloaded less than five minutes ago - skipping download")
-        return
+    #if os.path.exists(list_file) and file_is_current(list_file, 5 * 60):
+        #print("file already downloaded less than five minutes ago - skipping download")
+        #return
     print("Downloading camera_ready.csv ... ")
     pcs_session = requests.Session()
     r = pcs_session.get(PCS_LOGIN_URL)
     csrf_token = re.search(r'name="csrf_token" type="hidden" value="([a-z0-9#]+)"', r.text).groups()[0]
     r = pcs_session.post(PCS_LOGIN_URL, data={'username': user, 'password': password, 'csrf_token': csrf_token})
-    r = pcs_session.get(PCS_SPREADSHEET_URL_PREFIX + track_id + PCS_SPREADSHEET_URL_SUFFIX)
-    with open(list_file, "wb") as fd:
-        fd.write(r.content)
+
+    g = pcs_session.get(PCS_TRACK_LIST_URL)
+    roles = g.json()['data']
+    available_tracks = {}
+    for role in roles:
+        match = re.match(r'<a href="/(\w+)/(\w+)">(.+)</a>', role[3])
+        track_id_check = match.group(1)
+        role_id_check = match.group(2)
+        if role_id_check in ['pubchair', 'chair']:
+            available_tracks[track_id_check] = role_id_check
+    role_id = available_tracks[track_id]
+    
+    if role_id:
+        r = pcs_session.get(PCS_SPREADSHEET_URL_PREFIX + track_id + "/" + role_id + PCS_SPREADSHEET_URL_SUFFIX)
+        with open(list_file, "wb") as fd:
+            fd.write(r.content)
+    else:
+        print(f"You don't seem to have 'chair' or 'pubchair' access to track '{track_id}'.")    
     print("done.")
 
 
@@ -293,8 +308,11 @@ def download(track_id, dl_flags, overwrite, start_index, status, tracks, guess_f
     if tracks:
         print("Checking which tracks you have access to...")
         available_tracks = get_available_tracks(user, password, True)
-        if track_id not in available_tracks.keys():
-            print(f"You don't seem to have 'chair' or 'pubchair' access to track '{track_id}'.")
+        if track_id != "X":
+            if track_id in available_tracks.keys():
+                print(f"\n###########################\n\nYou have '" + available_tracks[track_id] + "' access to track '{track_id}'.")
+            else:
+                print(f"\n###########################\n\nYou don't seem to have 'chair' or 'pubchair' access to track '{track_id}'.")    
         sys.exit(1)
 
     fields_file = f"{track_id}{FIELDS_FILE_SUFFIX}"
