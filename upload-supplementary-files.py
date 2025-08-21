@@ -42,14 +42,14 @@ def setupDriver(outputFolder="./downloads", profile_dir="~/uc-profile"):
     # Allow 3rd-party cookies in iframes (for your uploader)
     opts.add_argument("--disable-features=BlockThirdPartyCookies,ThirdPartyStoragePartitioning,CookieDeprecationLabels")
     opts.add_experimental_option("prefs", {
-        "download.default_directory": os.path.abspath(outputFolder),
+        # "download.default_directory": os.path.abspath(outputFolder),
         "profile.block_third_party_cookies": False,
         "profile.cookie_controls_mode": 0,
         "profile.default_content_setting_values.cookies": 1,
     })
 
     # Use a dedicated profile outside Dropbox to avoid file locks:
-    opts.add_argument(f"--user-data-dir={profile_dir}")
+    # opts.add_argument(f"--user-data-dir={profile_dir}")
     # Startup hygiene (prevents some macOS first-run dialogs)
     opts.add_argument("--no-first-run")
     opts.add_argument("--no-default-browser-check")
@@ -65,9 +65,94 @@ def setupDriver(outputFolder="./downloads", profile_dir="~/uc-profile"):
         # ,use_subprocess=True  # can help on some mac setups
     )
 
-    driver.maximize_window()
     return driver
 
+def areAnyDetailsClosed(driver):
+    """
+    Check if any details sections are closed in the web page.
+
+    Parameters
+    ----------
+    driver : uc.Chrome
+        The Chrome WebDriver instance.
+
+    Returns
+    -------
+    bool
+        True if any details sections are closed, False otherwise.
+    """
+    open_details_elements = driver.find_elements(By.CSS_SELECTOR, "[id^='openDetails_']")
+    for i in range(len(open_details_elements)):
+        # click on the element is visible
+        if open_details_elements[i].is_displayed() :
+            return True
+    return False       
+
+def openAllDetails(driver):
+    """
+    Open all details sections in the web page.
+
+    Parameters
+    ----------
+    driver : uc.Chrome
+        The Chrome WebDriver instance.
+    """
+    while areAnyDetailsClosed(driver):
+        open_details_elements = driver.find_elements(By.CSS_SELECTOR, "[id^='openDetails_']")
+        for i in tqdm.tqdm(range(len(open_details_elements))):
+            if open_details_elements[i].is_displayed():
+                open_details_elements[i].click()
+                time.sleep(1)
+
+def getUploadedFiles(driver):
+    """
+    Get a DataFrame of uploaded files from the web page.
+
+    Parameters
+    ----------
+    driver : uc.Chrome
+        The Chrome WebDriver instance.
+
+    Returns
+    -------
+    pd.DataFrame
+        A DataFrame containing the uploaded files information.
+    """
+
+    lst = []
+    lstElementCollection = driver.find_elements(By.CSS_SELECTOR, "[id^='fileDetailsTD_']")
+    for elementCollection in tqdm.tqdm(lstElementCollection, desc="Processing elements"):
+        # get parentRow_
+        doi = elementCollection.find_element(By.CSS_SELECTOR, "[id^='doiFor_']").get_attribute("value")
+        doi
+
+        elementRows = elementCollection.find_elements(By.CSS_SELECTOR, "[id^='tr_']")
+        for row in elementRows:
+            # get all a tags
+            a_tags = row.find_elements(By.TAG_NAME, "a")[2]
+            info = a_tags.get_attribute("innerHTML").split("<br>")[1]
+            type = info.split(" - ")[0]
+            name = " - ".join(info.split(" - ")[1:])
+
+            lst.append([doi, type, name])
+
+    dfUploaded = pd.DataFrame(lst)
+    dfUploaded.columns = ["DOI", "Type", "File"]
+    return dfUploaded
+
+def convertMaterialType(material_type):
+    """
+    Valid options: Video, Audio, Software, Dataset, Presentation Slides, Other 
+    """
+    valid_types = ["Video", "Audio", "Software", "Dataset", "Presentation Slides", "Other"]
+
+    material_type = material_type.lower().replace('presentation', 'presentation slides').replace('supplemental material', 'other')
+
+    for valid_type in valid_types:
+        if material_type.lower() == valid_type.lower():
+            return valid_type
+        
+    return False
 
 def upload(e, proceedings_parent, uploader_name, uploader_email):
     """
@@ -90,14 +175,10 @@ def upload(e, proceedings_parent, uploader_name, uploader_email):
         True if the upload was successful, False otherwise.
     """
 
-    if type(e.Type) != str:
-        print(f" * {e.DOI}: Invalid type for e.Type: {type(e.Type)}")
+    supplement_type = convertMaterialType(e.Type)
+    if supplement_type == False:
+        print(f" * {e.DOI}: Invalid type for e.Type: {e.Type}")
         return False
-    if e.Type == "video":
-        supplement_type = 'Video'
-    else:
-        # In case the PCS dropdown options are not aligned with the ACM upload fields.
-        supplement_type = e.Type.capitalize().replace('Presentation', 'Presentation Slides').replace('Other', 'Supplemental Material').replace('other', 'Supplemental Material')
 
     if e.Path.endswith(".srt"):
         print(f" * {e.DOI}: Invalid file type: .srt they need to be converted to .vtt first")
@@ -165,6 +246,47 @@ def upload(e, proceedings_parent, uploader_name, uploader_email):
 
     return True
 
+def getMissingFiles(driver, proceedingsParent, dfArtifacts):
+    """
+    Get a list of missing files for the given proceedings parent and artifact DataFrame.
+
+    Parameters
+    ----------
+    driver : object
+        The Selenium WebDriver instance.
+    proceedingsParent : str
+        The parent ID for the proceedings.
+    dfArtifacts : DataFrame
+        The DataFrame containing artifact metadata.
+
+    Returns
+    -------
+    DataFrame
+        A DataFrame containing the missing files.
+    """
+    driver.get(f"https://cms.acm.org/artifactSubmission/fileUploadGrid.cfm?parent={proceedingsParent}")
+    time.sleep(5)
+    openAllDetails(driver)
+    dfUploaded = getUploadedFiles(driver)
+
+    dfArtifacts.DOI = dfArtifacts.DOI.apply(lambda x: str(x).strip())
+    dfUploaded.DOI = dfUploaded.DOI.apply(lambda x: str(x).strip())
+
+    dfArtifacts.Type = dfArtifacts.Type.apply(lambda x: str(x).strip().lower())
+    dfUploaded.Type = dfUploaded.Type.apply(lambda x: str(x).strip().lower())
+
+    dfUploaded = dfUploaded[dfUploaded.DOI.apply(lambda x: x in set(dfArtifacts.DOI))]
+
+    dfMerged = pd.merge(dfArtifacts, dfUploaded, on=["DOI", "Type", "File"], how="outer", suffixes=("", "_y"), indicator=True)
+    dfMissing = dfMerged[dfMerged["_merge"] == "left_only"]
+    dfMissing = dfMissing.sort_values("ID")
+
+    dfRemove = dfMerged[dfMerged["_merge"] == "right_only"]
+    dfRemove = dfRemove.sort_values("ID")
+    dfRemove.to_csv("removed_files.csv", index=False)
+
+    return dfMissing
+
 if __name__ == '__main__':
     with open("config.yaml") as f:
         CONFIG = yaml.safe_load(f)
@@ -199,17 +321,17 @@ if __name__ == '__main__':
         exit(1)
 
     print("Starting Selenium.")
-    driver = setupDriver("./downloads")
+    driver = setupDriver()
+    print("Opened Selenium.")
 
-    if not "Done" in dfArtifacts.columns:
+    dfMissing = getMissingFiles(driver, proceedingsParent, dfArtifacts)
+    if ("Done" in dfArtifacts.columns) == False:
         dfArtifacts["Done"] = False
 
-    dfToDo = dfArtifacts.sort_values("ID")
-    for i, e in tqdm.tqdm(dfToDo.iterrows(), total=len(dfToDo)):
-        if e.Done:
-            continue
+    for i, e in tqdm.tqdm(dfMissing.iterrows(), total=len(dfMissing)):
         if upload(e, proceedingsParent, uploader_name, uploader_email):
             dfArtifacts.loc[dfArtifacts.Path == e.Path, "Done"] = True
             dfArtifacts.to_csv("supFileList.csv", index=False)
 
     print(f"Uploaded {len(dfArtifacts[dfArtifacts.Done])} of {len(dfArtifacts)} files successfully.")
+
