@@ -3,3 +3,6 @@ requests
 tqdm
 webvtt
 pdfminer
+pandas
+selenium
+undetected_chromedriver

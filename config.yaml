@@ -1,0 +1,5 @@
+# Configuration for ACM submission yaml
+---
+ProceedingsParent: ABCDEF # https://cms.acm.org/artifactSubmission/fileUpload.cfm?parent=ABCDEF
+ACM_UPLOADER_NAME: XXX'25 Publications Chairs
+ACM_UPLOADER_EMAIL: publications@xxx.acm.org
