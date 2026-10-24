@@ -89,7 +89,7 @@ def get_html(element):
         x = re.match(r".*showhtml5\(('.*')\)", s).groups()[0]
         components = list(map(lambda s: s.strip(" ").strip("'"), x.split(',')))
         url = "https://camps.aptaracorp.com/" + components[1] + "/" + components[2]
-    except IndexError: # no PDF link
+    except IndexError: # no HTML link
         url = ""
     return url
 
@@ -122,7 +122,7 @@ def get_submissions(overwrite=True):
     if file_is_current(LIST_FILE):
         print("file downloaded within last 5 minutes - skipping download")
         return
-
+    #else:
     print("Logging in...")
     session = requests.Session()
     r = session.get(SESSION_PAGE)
@@ -183,7 +183,6 @@ def get_submissions(overwrite=True):
             print("ERROR: Unknown backend")
         data.append(d)
 
-    #print(cols)
     cols += ["PDF_URL", "HTML_URL", "ERROR_URL", "METADATA", "PCS_ID", "DOI"]
     if BACKEND == "procs":
         cols.remove("ACTIONS")
@@ -250,7 +249,7 @@ def download_files(data, filetypes, overwrite=False):
             if len(paper[filetype['field']]) > 1:
                 url = paper[filetype['field']]
                 filename = f"{filetype['dir']}/{pcs_id}_{taps_id}.{filetype['ext']}"
-                print(f"Retrieving {filetype['ext']} file: {paper[filetype['field']]}")
+                print(f"Retrieving {filetype['ext']} file: {url}")
                 download_file(taps_id, url, filename)
             else:
                 print("   >... not submitted")
