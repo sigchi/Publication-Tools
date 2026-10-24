@@ -381,12 +381,16 @@ def check_email(data):
         pass # too many false positives
         #return f"Only {emails}/{num_authors} authors have an email address!"
 
+CHECKS_GOOD = [check_embedded_files, check_line_length, check_differences_title, check_email, 
+          check_ligatures_fi, check_ligatures_ff, check_ligatures_qu,
+          check_pdf_doi, check_form_fields, check_pdf_size]
 
-CHECKS = [check_embedded_files, check_line_length, check_differences_title, check_email, 
-          check_ligatures_fi, check_ligatures_ff, check_ligatures_qu, check_pdf_creator, 
-          check_differences_reference_count, check_pdf_doi, check_form_fields, 
-          check_pdf_difference_taps_pdf, check_pdf_size]
+CHECKS_BAD = [check_pdf_creator] # signature needs to be updated for every conference
+CHECKS_UGLY = [check_differences_reference_count, # reference extraction in PDF fails often
+               check_differences_author_count, #  fails often, small chance of true positive
+               check_pdf_difference_taps_pdf] # only works if PCS PDFs downloaded, too
 
+CHECKS = CHECKS_GOOD + CHECKS_BAD
 
 def lint(pdf_file):
     print(f"# Checking {pdf_file}")
