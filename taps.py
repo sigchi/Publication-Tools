@@ -9,7 +9,7 @@ To do this, pass parameters `--all`, `--pdf`, `--html`, or a combination of thes
 
 Adjust the TAPS ID to match your conference. 
 
-The downloaded spreadsheet is called `taps_procs.csv`.
+The downloaded spreadsheet is called `taps_procs.csv` or `taps_pacm.csv` depending on the backend..
 Files are stored in folders ./TAPS_PDF/ and ./TAPS_HTML/ .
 Files are named `{Paper ID from PCS}_{Paper ID in TAPS}.{EXT}`, e.g., `pn1234_14.pdf`
 This filename is used by linting tools to check PCS and TAPS metadata, so the filename needs to contain both fields.
@@ -37,19 +37,31 @@ import requests
 from tqdm import tqdm
 print = tqdm.write
 
-
-CONF_ID = os.environ.get('CONF_ID') or input("Conference ID: ")
-PROC_ID = os.environ.get('PROC_ID') or input("Proceedings ID: ")
-SESSION_PAGE = 'https://camps.aptaracorp.com/ACMConference/'
-LOGIN_PAGE = 'https://camps.aptaracorp.com/ACMConference/login.html'
-METADATA_PAGE = 'https://camps.aptaracorp.com/ACMConference/showpaperdetails.html?event_ID=' + CONF_ID + '&proceeding_ID=' + PROC_ID + '&paper_Id='
-METADATA_SPREADSHEET = 'https://camps.aptaracorp.com/ACMConference/downloadmetadata.html?proceedingId=' + CONF_ID
-PROC_PAGE = 'https://camps.aptaracorp.com/ACMConference/showcopyrightpapers.html?event_ID=' + CONF_ID + '&workshop_id=0&proceeding_ID=' + PROC_ID
+# First set global state here - different for Proceedings and PACM
 
 USER_LOGINNAME = os.environ.get('TAPS_USER') or input("TAPS user; ")
 PASSWORD = os.environ.get('TAPS_PASSWORD') or getpass.getpass("TAPS password: ")
-LIST_FILE = "taps_procs.csv"
 
+if PASSWORD.startswith("PA"):
+    BACKEND = "pacm"
+    PACM_ID = os.environ.get('PACM_ID') or input("PACM ID: ")
+    PACM_PAGE = 'https://camps.aptaracorp.com/ACMConference/pacm_paperCopyright.html'
+    PACM_POST_DATA = {"acronym": PACM_ID,
+                  "offeringId": "",
+                  "pageName": "pacmhci"}
+    METADATA_PAGE = f"https://camps.aptaracorp.com/ACMConference/pacm_showpaperdetails.html?acronym={PACM_ID}&paperId="
+else:
+    BACKEND = "procs"
+    CONF_ID = os.environ.get('CONF_ID') or input("Conference ID: ")
+    PROC_ID = os.environ.get('PROC_ID') or input("Proceedings ID: ")
+    PROC_PAGE = 'https://camps.aptaracorp.com/ACMConference/showcopyrightpapers.html?event_ID=' + CONF_ID + '&workshop_id=0&proceeding_ID=' + PROC_ID
+    METADATA_PAGE = 'https://camps.aptaracorp.com/ACMConference/showpaperdetails.html?event_ID=' + CONF_ID + '&proceeding_ID=' + PROC_ID + '&paper_Id='
+    #METADATA_SPREADSHEET = 'https://camps.aptaracorp.com/ACMConference/downloadmetadata.html?proceedingId=' + CONF_ID
+
+LIST_FILE = f"taps_{BACKEND}.csv"
+
+SESSION_PAGE = 'https://camps.aptaracorp.com/ACMConference/'
+LOGIN_PAGE = 'https://camps.aptaracorp.com/ACMConference/login.html'
 
 # ############ Helper functions ##################
 
@@ -65,7 +77,7 @@ def get_pdf(element):
     try:
         s = element.xpath("a/img[@title = 'PDF Open']/..")[0].attrib['onclick']
         x = re.match(r".*openfile\(('.*')\)", s).groups()[0]
-        components = list(map(lambda s: s.strip("'"), x.split(',')))
+        components = list(map(lambda s: s.strip(" ").strip("'"), x.split(',')))
         url = "https://camps.aptaracorp.com/" + components[1] + "/" + components[2]
     except IndexError: # no PDF link
         url = ""
@@ -75,7 +87,7 @@ def get_html(element):
     try:
         s = element.xpath("a/img[@title = 'View HTML']/..")[0].attrib['onclick']
         x = re.match(r".*showhtml5\(('.*')\)", s).groups()[0]
-        components = list(map(lambda s: s.strip("'"), x.split(',')))
+        components = list(map(lambda s: s.strip(" ").strip("'"), x.split(',')))
         url = "https://camps.aptaracorp.com/" + components[1] + "/" + components[2]
     except IndexError: # no PDF link
         url = ""
@@ -115,13 +127,26 @@ def get_submissions(overwrite=True):
     session = requests.Session()
     r = session.get(SESSION_PAGE)
     # select_dashboard: 1 = Proceedings, 2 = PACM
-    r = session.post(LOGIN_PAGE, data={'user_loginname': USER_LOGINNAME, 'password': PASSWORD, 'select_dashboard': '1', 'button2': 'Login'})
+    if BACKEND == "procs":
+        r = session.post(LOGIN_PAGE, data={'user_loginname': USER_LOGINNAME, 'password': PASSWORD, 'select_dashboard': '1', 'button2': 'Login'})
+        r = session.post(PROC_PAGE)
+    elif BACKEND == "pacm":
+        r = session.post(LOGIN_PAGE, data={'user_loginname': USER_LOGINNAME, 'password': PASSWORD, 'select_dashboard': '2', 'button2': 'Login'})
+        r = session.post(PACM_PAGE, data=PACM_POST_DATA)
+    else:
+        print("ERROR: Unknown backend!")
+        return
     print("Retrieving list of papers (might take up to one minute - TAPS is slow) ...")
-    r = session.post(PROC_PAGE)
     root = etree.HTML(r.text)
     rows = root.xpath("//table[@id = 'ce_data']/tbody/tr")
-    headers = root.xpath("//table[@id = 'ce_data']/thead/tr/th/div")
     print(f"Found {len(rows)} papers.")  # number of papers
+    if BACKEND == "procs":
+        headers = root.xpath("//table[@id = 'ce_data']/thead/tr/th/div")
+    elif BACKEND == "pacm":
+        headers = root.xpath("//table[@id = 'ce_data']/thead/tr/th")
+    else:
+        print("ERROR: Unknown backend!")
+        return
     cols = [col.text.strip() for col in headers]
 
     data = []
@@ -131,8 +156,11 @@ def get_submissions(overwrite=True):
         for i in range(len(row)):
             # special cases:
             if cols[i] == 'STATUS':
-                d["STATUS"] = get_status(row.getchildren()[i])
-            elif cols[i] == 'ACTIONS':
+                try:
+                    d["STATUS"] = get_status(row.getchildren()[i])
+                except IndexError:
+                    d["STATUS"] = "NO UPLOAD YET"
+            elif cols[i] in ['ACTIONS', 'ACTION']:
                 d["PDF_URL"] = get_pdf(row.getchildren()[i])
                 d["HTML_URL"] = get_html(row.getchildren()[i])
                 d["ERROR_URL"] = get_error(row.getchildren()[i])
@@ -145,13 +173,22 @@ def get_submissions(overwrite=True):
         print(f"getting metadata for paper {d['PAPER ID']} ({d['TITLE']})")
         d["METADATA"] = session.get(METADATA_PAGE+d['PAPER ID']).text
         metadata = d['METADATA'].splitlines()
-        d["PCS_ID"] = metadata[9]
-        d["DOI"] = metadata[12]
+        if BACKEND == "procs":
+            d["PCS_ID"] = metadata[9]
+            d["DOI"] = metadata[12]
+        elif BACKEND == "pacm":
+            d["PCS_ID"] = metadata[1]
+            d["DOI"] = metadata[4]
+        else:
+            print("ERROR: Unknown backend")
         data.append(d)
 
     #print(cols)
     cols += ["PDF_URL", "HTML_URL", "ERROR_URL", "METADATA", "PCS_ID", "DOI"]
-    cols.remove("ACTIONS")
+    if BACKEND == "procs":
+        cols.remove("ACTIONS")
+    if BACKEND == "pacm":
+        cols.remove("ACTION")
 
     with open(LIST_FILE, "w") as fd:
         dw = DictWriter(fd, cols)
