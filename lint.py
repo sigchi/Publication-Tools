@@ -447,7 +447,7 @@ def lint(pdf_file):
             if message:
                 print(f"{pcs_id}: {typ}: {message}")
     else:
-        print(f"#{pcs_id}: OK!")
+        print(f"# {pcs_id}: OK!")
     errors["PCS ID"] = pcs_id  #   hand id back to calling function
     errors["PDF file"] = pdf_file  
     errors["Title"] = data['pdf_info']['TITLE']  
